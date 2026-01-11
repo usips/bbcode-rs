@@ -1,0 +1,40 @@
+[package]
+name = "bbcode"
+version = "0.1.0"
+edition = "2021"
+description = "A zero-copy BBCode parser supporting phpBB and XenForo syntax"
+license = "MIT"
+keywords = ["bbcode", "parser", "phpbb", "xenforo", "zero-copy"]
+categories = ["parsing", "text-processing"]
+
+[dependencies]
+# Zero-copy parser combinator library (winnow is a fork of nom, faster and more ergonomic)
+winnow = "0.7"
+
+# Cow-based string utilities for zero-copy string manipulation
+cow-utils = "0.1"
+
+# Standard library Cow for zero-copy string handling
+# (std::borrow::Cow is in std, no external crate needed)
+
+# Error handling
+thiserror = "2"
+
+# Optional: linkme for distributed plugin registration
+linkme = { version = "0.3", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1"
+
+[features]
+default = []
+plugins = ["linkme"]
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
