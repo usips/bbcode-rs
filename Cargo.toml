@@ -24,7 +24,7 @@ thiserror = "2"
 linkme = { version = "0.3", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1"
 
 [features]

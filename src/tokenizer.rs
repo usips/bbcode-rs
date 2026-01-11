@@ -91,7 +91,8 @@ type PResult<O> = Result<O, ErrMode<ContextError>>;
 /// Tokenizes BBCode input into a vector of tokens.
 ///
 /// This is a zero-copy operation - all string data in tokens reference
-/// the original input string.
+/// the original input string. No heap allocations are performed for
+/// string content.
 ///
 /// # Example
 /// ```
@@ -100,14 +101,21 @@ type PResult<O> = Result<O, ErrMode<ContextError>>;
 /// let tokens = tokenize("[b]Hello[/b]");
 /// assert_eq!(tokens.len(), 3);
 /// ```
+#[inline]
 pub fn tokenize(input: &str) -> Vec<Token<'_>> {
-    let mut tokens = Vec::new();
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    // Estimate token count: roughly 1 token per 10 characters for typical BBCode
+    let estimated_tokens = (input.len() / 10).max(4);
+    let mut tokens = Vec::with_capacity(estimated_tokens);
     let mut remaining = input;
     let original_input = input;
 
     while !remaining.is_empty() {
         let start_offset = original_input.len() - remaining.len();
-        
+
         match parse_token(&mut remaining, original_input, start_offset) {
             Ok(token) => {
                 // Skip null/empty tokens
@@ -121,8 +129,8 @@ pub fn tokenize(input: &str) -> Vec<Token<'_>> {
                     let char_len = c.len_utf8();
                     let char_str = &original_input[start_offset..start_offset + char_len];
                     remaining = &remaining[char_len..];
-                    
-                    // Merge with previous text token if possible
+
+                    // Merge with previous text token if possible (inline for performance)
                     if let Some(Token::Text(prev)) = tokens.last_mut() {
                         let prev_start = prev.as_ptr() as usize - original_input.as_ptr() as usize;
                         let prev_end = prev_start + prev.len();
@@ -138,49 +146,59 @@ pub fn tokenize(input: &str) -> Vec<Token<'_>> {
         }
     }
 
-    // Merge adjacent text tokens
+    // Merge adjacent text tokens (in-place, no allocation)
     merge_text_tokens(tokens, original_input)
 }
 
-/// Merges adjacent text tokens into single tokens.
-fn merge_text_tokens<'a>(tokens: Vec<Token<'a>>, input: &'a str) -> Vec<Token<'a>> {
-    if tokens.is_empty() {
+fn merge_text_tokens<'a>(mut tokens: Vec<Token<'a>>, input: &'a str) -> Vec<Token<'a>> {
+    if tokens.len() <= 1 {
         return tokens;
     }
 
-    let mut result = Vec::with_capacity(tokens.len());
     let input_start = input.as_ptr() as usize;
+    let mut write_idx = 0;
+    let mut read_idx = 1;
 
-    for token in tokens {
-        match (&token, result.last_mut()) {
-            (Token::Text(new_text), Some(Token::Text(ref mut existing))) => {
-                // Check if adjacent
+    while read_idx < tokens.len() {
+        let should_merge = match (&tokens[write_idx], &tokens[read_idx]) {
+            (Token::Text(existing), Token::Text(new_text)) => {
+                // Check if adjacent in the original input
                 let existing_start = existing.as_ptr() as usize - input_start;
                 let existing_end = existing_start + existing.len();
                 let new_start = new_text.as_ptr() as usize - input_start;
-
-                if existing_end == new_start {
-                    // Merge them
-                    *existing = &input[existing_start..new_start + new_text.len()];
-                } else {
-                    result.push(token);
-                }
+                existing_end == new_start
             }
-            _ => result.push(token),
+            _ => false,
+        };
+
+        if should_merge {
+            // Merge: extend the existing text token
+            if let (Token::Text(existing), Token::Text(new_text)) =
+                (&tokens[write_idx], &tokens[read_idx])
+            {
+                let existing_start = existing.as_ptr() as usize - input_start;
+                let new_start = new_text.as_ptr() as usize - input_start;
+                let merged = &input[existing_start..new_start + new_text.len()];
+                tokens[write_idx] = Token::Text(merged);
+            }
+        } else {
+            // Move to next write position
+            write_idx += 1;
+            if write_idx != read_idx {
+                tokens.swap(write_idx, read_idx);
+            }
         }
+        read_idx += 1;
     }
 
-    result
+    tokens.truncate(write_idx + 1);
+    tokens
 }
 
 /// Parses a single token from the input.
-fn parse_token<'a>(
-    input: &mut &'a str,
-    original: &'a str,
-    offset: usize,
-) -> PResult<Token<'a>> {
+fn parse_token<'a>(input: &mut &'a str, original: &'a str, offset: usize) -> PResult<Token<'a>> {
     let start = *input;
-    
+
     alt((
         parse_close_tag,
         parse_open_tag,
@@ -193,7 +211,7 @@ fn parse_token<'a>(
         // Update raw references to point to original input
         let consumed = start.len() - input.len();
         let raw_slice = &original[offset..offset + consumed];
-        
+
         match &mut token {
             Token::OpenTag { ref mut raw, .. } => *raw = raw_slice,
             Token::CloseTag { ref mut raw, .. } => *raw = raw_slice,
@@ -201,7 +219,7 @@ fn parse_token<'a>(
             Token::LineBreak(ref mut s) => *s = raw_slice,
             Token::Url(ref mut s) => *s = raw_slice,
         }
-        
+
         token
     })
 }
@@ -212,7 +230,7 @@ fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     if !input.starts_with('[') {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    
+
     // Check this is not a closing tag
     if input.get(1..2) == Some("/") {
         return Err(ErrMode::Backtrack(ContextError::new()));
@@ -221,7 +239,9 @@ fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     *input = &input[1..]; // consume '['
 
     // Parse tag name (alphanumeric, *, -)
-    let name_end = input.find(|c: char| !c.is_alphanumeric() && c != '*' && c != '-').unwrap_or(input.len());
+    let name_end = input
+        .find(|c: char| !c.is_alphanumeric() && c != '*' && c != '-')
+        .unwrap_or(input.len());
     if name_end == 0 {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
@@ -231,7 +251,7 @@ fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     // Parse optional argument
     let arg = if input.starts_with('=') {
         *input = &input[1..]; // consume '='
-        
+
         // Check for quoted value
         if input.starts_with('"') {
             let quoted: &str = delimited('"', take_till(0.., |c: char| c == '"'), '"')
@@ -276,11 +296,13 @@ fn parse_close_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     if !input.starts_with("[/") {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    
+
     *input = &input[2..]; // consume "[/"
 
     // Parse tag name
-    let name_end = input.find(|c: char| !c.is_alphanumeric() && c != '*' && c != '-').unwrap_or(input.len());
+    let name_end = input
+        .find(|c: char| !c.is_alphanumeric() && c != '*' && c != '-')
+        .unwrap_or(input.len());
     if name_end == 0 {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
@@ -308,13 +330,12 @@ fn parse_url<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
 
     // Take the protocol
     let protocol_len = if input.starts_with("https://") { 8 } else { 7 };
-    
+
     // Take characters that are valid in URLs
     let rest = &input[protocol_len..];
-    let url_end = rest.find(|c: char| {
-        c.is_whitespace()
-            || matches!(c, '[' | ']' | '<' | '>')
-    }).unwrap_or(rest.len());
+    let url_end = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '[' | ']' | '<' | '>'))
+        .unwrap_or(rest.len());
 
     let total_len = protocol_len + url_end;
     let mut url = &input[..total_len];
@@ -322,7 +343,7 @@ fn parse_url<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
 
     // Trim trailing punctuation that's likely not part of the URL
     url = url.trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | '!' | '?' | ':' | ';'));
-    
+
     Ok(Token::Url(url))
 }
 
@@ -344,32 +365,84 @@ fn parse_linebreak<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
 
 /// Parses plain text until a special character.
 fn parse_text<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
-    let end = input.find(|c: char| c == '[' || c == '\n' || c == '\r' || c == 'h').unwrap_or(input.len());
-    
+    let end = input
+        .find(|c: char| c == '[' || c == '\n' || c == '\r' || c == 'h')
+        .unwrap_or(input.len());
+
     if end == 0 {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    
+
     let text = &input[..end];
     *input = &input[end..];
 
     Ok(Token::Text(text))
 }
 
+/// Case-insensitive substring search without allocation.
+/// Returns the byte position of the first match, if found.
+#[inline]
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+
+    let needle_bytes = needle.as_bytes();
+    let haystack_bytes = haystack.as_bytes();
+    let first_needle_lower = needle_bytes[0].to_ascii_lowercase();
+    let first_needle_upper = needle_bytes[0].to_ascii_uppercase();
+
+    'outer: for i in 0..=(haystack_bytes.len() - needle_bytes.len()) {
+        let first = haystack_bytes[i];
+        if first != first_needle_lower && first != first_needle_upper {
+            continue;
+        }
+
+        // Check rest of needle
+        for j in 1..needle_bytes.len() {
+            let h = haystack_bytes[i + j];
+            let n = needle_bytes[j];
+            if h.to_ascii_lowercase() != n.to_ascii_lowercase() {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
+}
+
 /// Tokenizes verbatim content until we find a close tag.
 /// Used for [code], [plain], etc. where BBCode inside should not be parsed.
 /// Returns (content before close tag, close tag itself, remaining after close tag)
+///
+/// This is a zero-copy operation - no allocations are performed.
 pub fn tokenize_until_close<'a>(input: &'a str, tag_name: &str) -> (&'a str, &'a str, &'a str) {
-    let close_pattern_lower = format!("[/{}]", tag_name.to_lowercase());
-    
-    // Search for the close tag (case-insensitive)
-    let input_lower = input.to_lowercase();
-    
-    if let Some(pos) = input_lower.find(&close_pattern_lower) {
+    // Build the close tag pattern in a stack buffer to avoid allocation
+    // Max reasonable tag name is ~32 chars, so [/name] is max ~36 bytes
+    let mut pattern_buf = [0u8; 40];
+    let pattern_len = 3 + tag_name.len(); // "[/" + name + "]"
+
+    if pattern_len > pattern_buf.len() {
+        // Tag name too long, won't match anything reasonable
+        return (input, "", "");
+    }
+
+    pattern_buf[0] = b'[';
+    pattern_buf[1] = b'/';
+    pattern_buf[2..2 + tag_name.len()].copy_from_slice(tag_name.as_bytes());
+    pattern_buf[2 + tag_name.len()] = b']';
+
+    // SAFETY: We're only copying ASCII bytes from tag_name which should be ASCII
+    let pattern = unsafe { std::str::from_utf8_unchecked(&pattern_buf[..pattern_len]) };
+
+    // Search for the close tag (case-insensitive) without allocating
+    if let Some(pos) = find_case_insensitive(input, pattern) {
         let content = &input[..pos];
-        let close_tag_len = close_pattern_lower.len();
-        let close_tag = &input[pos..pos + close_tag_len];
-        let remaining = &input[pos + close_tag_len..];
+        let close_tag = &input[pos..pos + pattern_len];
+        let remaining = &input[pos + pattern_len..];
         (content, close_tag, remaining)
     } else {
         // No close tag found, return everything as content
@@ -475,14 +548,16 @@ mod tests {
     #[test]
     fn tokenize_http_url() {
         let tokens = tokenize("Go to http://example.com");
-        assert!(tokens.iter().any(|t| matches!(t, Token::Url(u) if u.starts_with("http://"))));
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(t, Token::Url(u) if u.starts_with("http://"))));
     }
 
     #[test]
     fn tokenize_complex() {
         let input = "[quote=\"User\"]Hello [b]World[/b]![/quote]";
         let tokens = tokenize(input);
-        
+
         assert!(tokens.len() >= 5);
         assert!(matches!(
             tokens[0],
@@ -571,7 +646,8 @@ mod tests {
 
     #[test]
     fn tokenize_until_close_basic() {
-        let (content, close_tag, remaining) = tokenize_until_close("some [b]code[/b] here[/code]rest", "code");
+        let (content, close_tag, remaining) =
+            tokenize_until_close("some [b]code[/b] here[/code]rest", "code");
         assert_eq!(content, "some [b]code[/b] here");
         assert_eq!(close_tag, "[/code]");
         assert_eq!(remaining, "rest");
@@ -596,8 +672,14 @@ mod tests {
     #[test]
     fn tokenize_multiple_same_tags() {
         let tokens = tokenize("[b]one[/b] [b]two[/b]");
-        let open_count = tokens.iter().filter(|t| matches!(t, Token::OpenTag { name: "b", .. })).count();
-        let close_count = tokens.iter().filter(|t| matches!(t, Token::CloseTag { name: "b", .. })).count();
+        let open_count = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::OpenTag { name: "b", .. }))
+            .count();
+        let close_count = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::CloseTag { name: "b", .. }))
+            .count();
         assert_eq!(open_count, 2);
         assert_eq!(close_count, 2);
     }
@@ -605,14 +687,20 @@ mod tests {
     #[test]
     fn tokenize_special_tag_names() {
         let tokens = tokenize("[list-item]Test[/list-item]");
-        assert!(matches!(tokens[0], Token::OpenTag { name: "list-item", .. }));
+        assert!(matches!(
+            tokens[0],
+            Token::OpenTag {
+                name: "list-item",
+                ..
+            }
+        ));
     }
 
     #[test]
     fn raw_text_preservation() {
         let input = "[b]Bold[/b]";
         let tokens = tokenize(input);
-        
+
         if let Token::OpenTag { raw, .. } = &tokens[0] {
             assert_eq!(*raw, "[b]");
         }
