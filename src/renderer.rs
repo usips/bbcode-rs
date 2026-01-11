@@ -3,13 +3,113 @@
 //! This module converts a parsed BBCode AST into HTML using zero-copy
 //! techniques where possible. The `cow-utils` crate is used for efficient
 //! string manipulation that avoids allocation when unnecessary.
+//!
+//! ## Custom Tag Handlers
+//!
+//! The renderer supports extensibility through custom tag handlers. Implement
+//! the [`CustomTagHandler`] trait to add custom rendering logic for specific tags:
+//!
+//! ```rust,ignore
+//! use bbcode::{CustomTagHandler, TagNode, RenderContext};
+//!
+//! struct AttachHandler {
+//!     attachments: HashMap<u64, AttachmentData>,
+//! }
+//!
+//! impl CustomTagHandler for AttachHandler {
+//!     fn tag_name(&self) -> &str { "attach" }
+//!     
+//!     fn render(&self, tag: &TagNode, ctx: &RenderContext, output: &mut String) -> bool {
+//!         // Custom rendering logic
+//!         true // handled
+//!     }
+//! }
+//! ```
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::sync::Arc;
 
 use crate::ast::{Document, Node, TagNode};
 use crate::tags::TagRegistry;
+
+/// Context provided to custom tag handlers for rendering.
+#[derive(Debug, Clone)]
+pub struct RenderContext<'a> {
+    /// The CSS class prefix.
+    pub class_prefix: &'a str,
+    /// Whether to add nofollow to links.
+    pub nofollow_links: bool,
+    /// Whether to open links in new tab.
+    pub open_links_in_new_tab: bool,
+    /// Whether to sanitize (escape HTML).
+    pub sanitize: bool,
+    /// Allowed URL schemes.
+    pub allowed_schemes: &'a [String],
+}
+
+/// Trait for custom tag handlers that extend the renderer.
+///
+/// Implement this trait to add custom rendering logic for specific BBCode tags.
+/// Custom handlers are checked before the built-in tags, allowing you to override
+/// or extend default behavior.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use bbcode::{CustomTagHandler, TagNode, RenderContext, escape_html};
+///
+/// struct MediaHandler;
+///
+/// impl CustomTagHandler for MediaHandler {
+///     fn tag_name(&self) -> &str { "media" }
+///     
+///     fn render(&self, tag: &TagNode, ctx: &RenderContext, output: &mut String) -> bool {
+///         if let Some(site) = tag.option.as_scalar() {
+///             let content = tag.inner_text();
+///             output.push_str(&format!(
+///                 r#"<div class="{}-media" data-site="{}">{}</div>"#,
+///                 ctx.class_prefix,
+///                 escape_html(site),
+///                 escape_html(&content)
+///             ));
+///             return true;
+///         }
+///         false // not handled, fall through to default
+///     }
+/// }
+/// ```
+pub trait CustomTagHandler: Send + Sync {
+    /// Returns the tag name this handler processes (lowercase).
+    fn tag_name(&self) -> &str;
+
+    /// Renders the tag to HTML.
+    ///
+    /// Returns `true` if the tag was handled, `false` to fall through to default rendering.
+    ///
+    /// # Arguments
+    ///
+    /// * `tag` - The tag node to render
+    /// * `ctx` - Rendering context with configuration
+    /// * `output` - The output string to write HTML to
+    fn render(&self, tag: &TagNode, ctx: &RenderContext, output: &mut String) -> bool;
+
+    /// Optional: Called before rendering to collect data from all tags of this type.
+    ///
+    /// This is useful for batch operations like pre-fetching attachments from a database.
+    /// The default implementation does nothing.
+    fn collect(&self, _tag: &TagNode) {
+        // Default: no collection needed
+    }
+
+    /// Optional: Called after all tags have been collected, before rendering begins.
+    ///
+    /// This is the place to perform batch operations like database queries.
+    fn prepare(&self) {
+        // Default: no preparation needed
+    }
+}
 
 /// Configuration for the HTML renderer.
 #[derive(Debug, Clone)]
@@ -58,6 +158,7 @@ impl Default for RenderConfig {
 pub struct Renderer {
     config: RenderConfig,
     registry: TagRegistry,
+    custom_handlers: HashMap<String, Arc<dyn CustomTagHandler>>,
 }
 
 impl Renderer {
@@ -66,6 +167,7 @@ impl Renderer {
         Self {
             config: RenderConfig::default(),
             registry: TagRegistry::new(),
+            custom_handlers: HashMap::new(),
         }
     }
 
@@ -74,6 +176,62 @@ impl Renderer {
         Self {
             config,
             registry: TagRegistry::new(),
+            custom_handlers: HashMap::new(),
+        }
+    }
+
+    /// Registers a custom tag handler.
+    ///
+    /// Custom handlers are checked before built-in tags, allowing you to
+    /// override or extend default behavior.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use std::sync::Arc;
+    /// use bbcode::{Renderer, CustomTagHandler};
+    ///
+    /// let mut renderer = Renderer::new();
+    /// renderer.register_handler(Arc::new(MyCustomHandler));
+    /// ```
+    pub fn register_handler(&mut self, handler: Arc<dyn CustomTagHandler>) {
+        let name = handler.tag_name().to_ascii_lowercase();
+        self.custom_handlers.insert(name, handler);
+    }
+
+    /// Collects data from all tags for pre-fetching.
+    ///
+    /// Call this before rendering if your custom handlers need to batch-fetch data.
+    pub fn collect_from_document(&self, doc: &Document) {
+        for node in doc.iter() {
+            self.collect_from_node(node);
+        }
+        // Call prepare on all handlers after collection
+        for handler in self.custom_handlers.values() {
+            handler.prepare();
+        }
+    }
+
+    fn collect_from_node(&self, node: &Node) {
+        if let Node::Tag(tag) = node {
+            let name_lower = tag.name.to_ascii_lowercase();
+            if let Some(handler) = self.custom_handlers.get(&name_lower) {
+                handler.collect(tag);
+            }
+            for child in &tag.children {
+                self.collect_from_node(child);
+            }
+        }
+    }
+
+    /// Creates a render context from the current configuration.
+    fn render_context(&self) -> RenderContext<'_> {
+        RenderContext {
+            class_prefix: &self.config.class_prefix,
+            nofollow_links: self.config.nofollow_links,
+            open_links_in_new_tab: self.config.open_links_in_new_tab,
+            sanitize: self.config.sanitize,
+            allowed_schemes: &self.config.allowed_schemes,
         }
     }
 
@@ -152,6 +310,15 @@ impl Renderer {
                 self.render_text(&tag.raw_close, output);
             }
             return;
+        }
+
+        // Check custom handlers first
+        let name_lower = tag.name.to_ascii_lowercase();
+        if let Some(handler) = self.custom_handlers.get(&name_lower) {
+            let ctx = self.render_context();
+            if handler.render(tag, &ctx, output) {
+                return; // Custom handler processed the tag
+            }
         }
 
         // Look up tag definition

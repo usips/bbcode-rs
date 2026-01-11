@@ -2,11 +2,33 @@
 //!
 //! This module defines all supported BBCode tags, their properties,
 //! and how they should be parsed and rendered.
+//!
+//! ## Custom Tags
+//!
+//! To add custom tags to your application, use [`CustomTagDef`] which supports
+//! runtime-defined tags with owned strings:
+//!
+//! ```rust
+//! use bbcode::{TagRegistry, CustomTagDef, TagType};
+//!
+//! let mut registry = TagRegistry::new();
+//! registry.register_custom(CustomTagDef {
+//!     name: "attach".into(),
+//!     aliases: vec!["attachment".into()],
+//!     tag_type: TagType::Inline,
+//!     ..Default::default()
+//! });
+//! ```
 
 use crate::ast::TagType;
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Definition of a BBCode tag.
+/// Definition of a BBCode tag (static, compile-time).
+///
+/// This is used for the built-in tags. For custom tags defined at runtime,
+/// use [`CustomTagDef`] instead.
 #[derive(Debug, Clone)]
 pub struct TagDef {
     /// The canonical tag name (lowercase).
@@ -95,16 +117,264 @@ impl TagDef {
     }
 }
 
+/// Definition of a custom BBCode tag (runtime, owned strings).
+///
+/// Use this to define tags at runtime in your application without
+/// modifying the bbcode library.
+///
+/// # Example
+///
+/// ```rust
+/// use bbcode::{CustomTagDef, TagType};
+///
+/// let attach_tag = CustomTagDef {
+///     name: "attach".into(),
+///     aliases: vec!["attachment".into()],
+///     tag_type: TagType::Inline,
+///     option_allowed: true,
+///     has_content: true,
+///     trim_content: true,
+///     stop_auto_link: true,
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct CustomTagDef {
+    /// The canonical tag name (lowercase).
+    pub name: Cow<'static, str>,
+
+    /// Alternative names for this tag (aliases).
+    pub aliases: Vec<Cow<'static, str>>,
+
+    /// The type of tag (inline, block, verbatim, etc.).
+    pub tag_type: TagType,
+
+    /// Whether this tag requires an option/argument.
+    pub option_required: bool,
+
+    /// Whether this tag allows an option/argument.
+    pub option_allowed: bool,
+
+    /// Whether this tag can have children.
+    pub has_content: bool,
+
+    /// Tags that this tag cannot be nested inside.
+    pub forbidden_ancestors: Vec<Cow<'static, str>>,
+
+    /// Tags that must be direct parents of this tag.
+    pub required_parents: Vec<Cow<'static, str>>,
+
+    /// The HTML tag to render as (if simple).
+    pub html_tag: Option<Cow<'static, str>>,
+
+    /// Whether to stop smilie/emoji conversion inside this tag.
+    pub stop_smilies: bool,
+
+    /// Whether to stop auto-linking URLs inside this tag.
+    pub stop_auto_link: bool,
+
+    /// Whether newlines should be converted to <br>.
+    pub convert_newlines: bool,
+
+    /// Whether content should be trimmed.
+    pub trim_content: bool,
+}
+
+impl Default for CustomTagDef {
+    fn default() -> Self {
+        Self {
+            name: Cow::Borrowed(""),
+            aliases: Vec::new(),
+            tag_type: TagType::Inline,
+            option_required: false,
+            option_allowed: true,
+            has_content: true,
+            forbidden_ancestors: Vec::new(),
+            required_parents: Vec::new(),
+            html_tag: None,
+            stop_smilies: false,
+            stop_auto_link: false,
+            convert_newlines: true,
+            trim_content: false,
+        }
+    }
+}
+
+impl CustomTagDef {
+    /// Creates a new custom tag with the given name.
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Returns true if this tag is a verbatim tag (content not parsed).
+    #[inline]
+    pub fn is_verbatim(&self) -> bool {
+        self.tag_type == TagType::Verbatim
+    }
+
+    /// Returns true if this tag is self-closing.
+    #[inline]
+    pub fn is_self_closing(&self) -> bool {
+        self.tag_type == TagType::SelfClosing
+    }
+
+    /// Returns true if this tag is a block element.
+    #[inline]
+    pub fn is_block(&self) -> bool {
+        self.tag_type == TagType::Block
+    }
+
+    /// Returns true if this tag is an inline element.
+    #[inline]
+    pub fn is_inline(&self) -> bool {
+        self.tag_type == TagType::Inline
+    }
+}
+
+/// A resolved tag definition that can be either static or custom.
+#[derive(Debug, Clone)]
+pub enum ResolvedTag {
+    /// A built-in static tag definition.
+    Static(&'static TagDef),
+    /// A custom runtime tag definition.
+    Custom(Arc<CustomTagDef>),
+}
+
+impl ResolvedTag {
+    /// Returns the tag name.
+    pub fn name(&self) -> &str {
+        match self {
+            ResolvedTag::Static(t) => t.name,
+            ResolvedTag::Custom(t) => &t.name,
+        }
+    }
+
+    /// Returns the tag type.
+    pub fn tag_type(&self) -> TagType {
+        match self {
+            ResolvedTag::Static(t) => t.tag_type,
+            ResolvedTag::Custom(t) => t.tag_type,
+        }
+    }
+
+    /// Returns true if this tag is verbatim.
+    pub fn is_verbatim(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.is_verbatim(),
+            ResolvedTag::Custom(t) => t.is_verbatim(),
+        }
+    }
+
+    /// Returns true if this tag is self-closing.
+    pub fn is_self_closing(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.is_self_closing(),
+            ResolvedTag::Custom(t) => t.is_self_closing(),
+        }
+    }
+
+    /// Returns true if this tag is a block element.
+    pub fn is_block(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.is_block(),
+            ResolvedTag::Custom(t) => t.is_block(),
+        }
+    }
+
+    /// Returns true if content should be trimmed.
+    pub fn trim_content(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.trim_content,
+            ResolvedTag::Custom(t) => t.trim_content,
+        }
+    }
+
+    /// Returns true if this tag has content.
+    pub fn has_content(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.has_content,
+            ResolvedTag::Custom(t) => t.has_content,
+        }
+    }
+
+    /// Returns true if auto-linking should be stopped.
+    pub fn stop_auto_link(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.stop_auto_link,
+            ResolvedTag::Custom(t) => t.stop_auto_link,
+        }
+    }
+
+    /// Returns true if an option is required.
+    pub fn option_required(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.option_required,
+            ResolvedTag::Custom(t) => t.option_required,
+        }
+    }
+
+    /// Returns true if an option is allowed.
+    pub fn option_allowed(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.option_allowed,
+            ResolvedTag::Custom(t) => t.option_allowed,
+        }
+    }
+
+    /// Checks if the given ancestor name is forbidden.
+    pub fn is_ancestor_forbidden(&self, ancestor: &str) -> bool {
+        let ancestor_lower = ancestor.to_ascii_lowercase();
+        match self {
+            ResolvedTag::Static(t) => t
+                .forbidden_ancestors
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(&ancestor_lower)),
+            ResolvedTag::Custom(t) => t
+                .forbidden_ancestors
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(&ancestor_lower)),
+        }
+    }
+
+    /// Checks if a required parent is satisfied by the stack.
+    pub fn has_required_parent(&self, stack: &[impl AsRef<str>]) -> bool {
+        let required = match self {
+            ResolvedTag::Static(t) => t.required_parents,
+            ResolvedTag::Custom(t) => {
+                return t.required_parents.is_empty()
+                    || stack.iter().any(|s| {
+                        t.required_parents
+                            .iter()
+                            .any(|r| r.eq_ignore_ascii_case(s.as_ref()))
+                    })
+            }
+        };
+
+        if required.is_empty() {
+            return true;
+        }
+
+        stack
+            .iter()
+            .any(|s| required.iter().any(|r| r.eq_ignore_ascii_case(s.as_ref())))
+    }
+}
+
 /// Registry of all supported BBCode tags.
 pub struct TagRegistry {
-    tags: HashMap<&'static str, &'static TagDef>,
+    static_tags: HashMap<&'static str, &'static TagDef>,
+    custom_tags: HashMap<String, Arc<CustomTagDef>>,
 }
 
 impl TagRegistry {
     /// Creates a new registry with all standard tags registered.
     pub fn new() -> Self {
         let mut registry = Self {
-            tags: HashMap::new(),
+            static_tags: HashMap::new(),
+            custom_tags: HashMap::new(),
         };
 
         // Register all standard tags
@@ -115,35 +385,98 @@ impl TagRegistry {
         registry
     }
 
-    /// Registers a tag definition.
+    /// Creates an empty registry with no tags.
+    pub fn empty() -> Self {
+        Self {
+            static_tags: HashMap::new(),
+            custom_tags: HashMap::new(),
+        }
+    }
+
+    /// Registers a static tag definition.
     pub fn register(&mut self, tag: &'static TagDef) {
-        self.tags.insert(tag.name, tag);
+        self.static_tags.insert(tag.name, tag);
         for alias in tag.aliases {
-            self.tags.insert(alias, tag);
+            self.static_tags.insert(alias, tag);
+        }
+    }
+
+    /// Registers a custom tag definition.
+    ///
+    /// Custom tags take precedence over static tags with the same name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bbcode::{TagRegistry, CustomTagDef, TagType};
+    ///
+    /// let mut registry = TagRegistry::new();
+    /// registry.register_custom(CustomTagDef {
+    ///     name: "attach".into(),
+    ///     aliases: vec!["attachment".into()],
+    ///     tag_type: TagType::Inline,
+    ///     option_allowed: true,
+    ///     trim_content: true,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn register_custom(&mut self, tag: CustomTagDef) {
+        let tag = Arc::new(tag);
+        let name = tag.name.to_ascii_lowercase();
+        self.custom_tags.insert(name, Arc::clone(&tag));
+        for alias in &tag.aliases {
+            let alias_lower = alias.to_ascii_lowercase();
+            self.custom_tags.insert(alias_lower, Arc::clone(&tag));
         }
     }
 
     /// Looks up a tag by name (case-insensitive).
-    pub fn get(&self, name: &str) -> Option<&'static TagDef> {
-        // Convert to lowercase for lookup
+    ///
+    /// Custom tags take precedence over static tags.
+    pub fn resolve(&self, name: &str) -> Option<ResolvedTag> {
         let lower = name.to_ascii_lowercase();
-        self.tags.get(lower.as_str()).copied()
+
+        // Check custom tags first
+        if let Some(tag) = self.custom_tags.get(&lower) {
+            return Some(ResolvedTag::Custom(Arc::clone(tag)));
+        }
+
+        // Fall back to static tags
+        self.static_tags
+            .get(lower.as_str())
+            .map(|t| ResolvedTag::Static(t))
     }
 
-    /// Returns true if the tag is known.
+    /// Looks up a static tag by name (case-insensitive).
+    ///
+    /// This only returns built-in static tags, not custom tags.
+    pub fn get(&self, name: &str) -> Option<&'static TagDef> {
+        let lower = name.to_ascii_lowercase();
+        self.static_tags.get(lower.as_str()).copied()
+    }
+
+    /// Returns true if the tag is known (either static or custom).
     pub fn is_known(&self, name: &str) -> bool {
         let lower = name.to_ascii_lowercase();
-        self.tags.contains_key(lower.as_str())
+        self.custom_tags.contains_key(&lower) || self.static_tags.contains_key(lower.as_str())
     }
 
-    /// Returns an iterator over all registered tags.
+    /// Returns an iterator over all registered static tags.
     pub fn iter(&self) -> impl Iterator<Item = &'static TagDef> + '_ {
         // Deduplicate by name
         let mut seen = std::collections::HashSet::new();
-        self.tags
+        self.static_tags
             .values()
             .filter(move |tag| seen.insert(tag.name))
             .copied()
+    }
+
+    /// Returns an iterator over all registered custom tags.
+    pub fn iter_custom(&self) -> impl Iterator<Item = &Arc<CustomTagDef>> + '_ {
+        let mut seen = std::collections::HashSet::new();
+        self.custom_tags
+            .values()
+            .filter(move |tag| seen.insert(tag.name.as_ref()))
     }
 }
 
@@ -761,6 +1094,9 @@ pub static TAG_TD: TagDef = TagDef {
 // ============================================================================
 
 /// All standard BBCode tags.
+///
+/// To add custom tags (like `[attach]` or `[media]`), use
+/// [`TagRegistry::register_custom`] with a [`CustomTagDef`].
 pub static STANDARD_TAGS: &[&TagDef] = &[
     // Basic formatting
     &TAG_BOLD,

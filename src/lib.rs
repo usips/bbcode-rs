@@ -89,8 +89,8 @@ pub mod tokenizer;
 pub use ast::{Document, Node, TagNode, TagOption, TagType};
 pub use error::{ParseError, RenderError};
 pub use parser::{Parser, ParserConfig};
-pub use renderer::{escape_html, RenderConfig, Renderer};
-pub use tags::{TagDef, TagRegistry, STANDARD_TAGS};
+pub use renderer::{escape_html, CustomTagHandler, RenderConfig, RenderContext, Renderer};
+pub use tags::{CustomTagDef, ResolvedTag, TagDef, TagRegistry, STANDARD_TAGS};
 pub use tokenizer::{tokenize, Token};
 
 /// Parses BBCode and renders it to HTML with default settings.
