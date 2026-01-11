@@ -224,7 +224,7 @@ fn parse_token<'a>(input: &mut &'a str, original: &'a str, offset: usize) -> PRe
     })
 }
 
-/// Parses an opening tag like `[tag]` or `[tag=value]`.
+/// Parses an opening tag like `[tag]`, `[tag=value]`, or `[tag key=value]`.
 fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     // Match opening bracket
     if !input.starts_with('[') {
@@ -248,7 +248,10 @@ fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
     let name = &input[..name_end];
     *input = &input[name_end..];
 
-    // Parse optional argument
+    // Parse optional argument - can be:
+    // 1. =value (scalar)
+    // 2. =value key2=value2 (scalar + keyed)
+    // 3. key=value key2=value2 (space-separated keyed)
     let arg = if input.starts_with('=') {
         *input = &input[1..]; // consume '='
 
@@ -272,6 +275,18 @@ fn parse_open_tag<'a>(input: &mut &'a str) -> PResult<Token<'a>> {
             let value = &input[..value_end];
             *input = &input[value_end..];
             Some(value)
+        }
+    } else if input.starts_with(' ') {
+        // Space-separated attributes like [tag key=value key2=value2]
+        // Capture everything until the closing bracket
+        let value_end = input.find(']').unwrap_or(input.len());
+        if value_end > 1 {
+            // Skip the leading space
+            let value = &input[1..value_end];
+            *input = &input[value_end..];
+            Some(value)
+        } else {
+            None
         }
     } else {
         None

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::ast::{Document, Node, TagNode, TagOption};
-use crate::tags::{TagDef, TagRegistry};
+use crate::tags::{CustomTagDef, ResolvedTag, TagRegistry};
 use crate::tokenizer::{tokenize, tokenize_until_close, Token};
 
 /// Maximum nesting depth to prevent stack overflow.
@@ -66,6 +66,45 @@ impl Parser {
         }
     }
 
+    /// Creates a new parser with a custom tag registry.
+    pub fn with_registry(registry: TagRegistry) -> Self {
+        Self {
+            registry,
+            config: ParserConfig::default(),
+        }
+    }
+
+    /// Creates a new parser with custom configuration and registry.
+    pub fn with_config_and_registry(config: ParserConfig, registry: TagRegistry) -> Self {
+        Self { registry, config }
+    }
+
+    /// Registers a custom tag definition.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bbcode::{Parser, CustomTagDef, TagType};
+    ///
+    /// let mut parser = Parser::new();
+    /// parser.register_custom_tag(CustomTagDef {
+    ///     name: "attach".into(),
+    ///     aliases: vec!["attachment".into()],
+    ///     tag_type: TagType::Inline,
+    ///     option_allowed: true,
+    ///     trim_content: true,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn register_custom_tag(&mut self, tag: CustomTagDef) {
+        self.registry.register_custom(tag);
+    }
+
+    /// Returns a reference to the tag registry.
+    pub fn registry(&self) -> &TagRegistry {
+        &self.registry
+    }
+
     /// Parses BBCode input into a document AST.
     pub fn parse<'a>(&self, input: &'a str) -> Document<'a> {
         let tokens = tokenize(input);
@@ -105,8 +144,8 @@ impl Parser {
                 Token::OpenTag { raw, name, arg } => {
                     let lower_name = name.to_ascii_lowercase();
 
-                    // Look up the tag definition
-                    if let Some(tag_def) = self.registry.get(&lower_name) {
+                    // Look up the tag definition (static or custom)
+                    if let Some(resolved) = self.registry.resolve(&lower_name) {
                         // Check nesting depth
                         if depth + stack.len() >= self.config.max_depth {
                             // Too deep, treat as text
@@ -117,7 +156,7 @@ impl Parser {
                         }
 
                         // Check forbidden ancestors
-                        if !self.check_ancestors(&stack, tag_def) {
+                        if !self.check_ancestors_resolved(&stack, &resolved) {
                             // Invalid nesting, treat as text
                             let node = Node::Text(Cow::Borrowed(*raw));
                             self.push_to_stack_or_doc(&mut stack, &mut doc, node);
@@ -126,7 +165,7 @@ impl Parser {
                         }
 
                         // Check required parents
-                        if !self.check_required_parents(&stack, tag_def) {
+                        if !self.check_required_parents_resolved(&stack, &resolved) {
                             // Missing required parent, treat as text
                             let node = Node::Text(Cow::Borrowed(*raw));
                             self.push_to_stack_or_doc(&mut stack, &mut doc, node);
@@ -135,10 +174,10 @@ impl Parser {
                         }
 
                         // Parse the option
-                        let option = self.parse_option(*arg, tag_def);
+                        let option = self.parse_option_resolved(*arg, &resolved);
 
                         // Check if option is required but missing
-                        if tag_def.option_required && option.is_none() {
+                        if resolved.option_required() && option.is_none() {
                             // Missing required option, treat as text
                             let node = Node::Text(Cow::Borrowed(*raw));
                             self.push_to_stack_or_doc(&mut stack, &mut doc, node);
@@ -160,9 +199,9 @@ impl Parser {
                         };
 
                         // Handle self-closing tags
-                        if tag_def.is_self_closing() {
+                        if resolved.is_self_closing() {
                             // List items are special - they need content until next [*] or [/list]
-                            if tag_def.name == "*" {
+                            if resolved.name() == "*" {
                                 // Collect content until next [*] or [/list]
                                 i += 1;
                                 while i < tokens.len() {
@@ -216,7 +255,7 @@ impl Parser {
                             }
                         }
                         // Handle verbatim tags (content not parsed)
-                        else if tag_def.is_verbatim() {
+                        else if resolved.is_verbatim() {
                             // Find the closing tag in the remaining input
                             let remaining_start = self.find_token_end(original_input, *raw);
                             if let Some(start_pos) = remaining_start {
@@ -328,9 +367,9 @@ impl Parser {
         match &tokens[0] {
             Token::OpenTag { raw, name, arg } => {
                 let lower_name = name.to_ascii_lowercase();
-                let tag_def = self.registry.get(&lower_name)?;
+                let resolved = self.registry.resolve(&lower_name)?;
 
-                let option = self.parse_option(*arg, tag_def);
+                let option = self.parse_option_resolved(*arg, &resolved);
 
                 let mut tag_node = TagNode {
                     name: Cow::Owned(lower_name.clone()),
@@ -398,38 +437,20 @@ impl Parser {
         }
     }
 
-    /// Checks if the tag is allowed based on forbidden ancestors.
-    fn check_ancestors(&self, stack: &[TagNode], tag_def: &TagDef) -> bool {
-        if tag_def.forbidden_ancestors.is_empty() {
-            return true;
-        }
-
+    /// Checks if the tag is allowed based on forbidden ancestors (for resolved tags).
+    fn check_ancestors_resolved(&self, stack: &[TagNode], resolved: &ResolvedTag) -> bool {
         for ancestor in stack {
-            if tag_def
-                .forbidden_ancestors
-                .iter()
-                .any(|&f| f.eq_ignore_ascii_case(&ancestor.name))
-            {
+            if resolved.is_ancestor_forbidden(&ancestor.name) {
                 return false;
             }
         }
         true
     }
 
-    /// Checks if required parent tags are present.
-    fn check_required_parents(&self, stack: &[TagNode], tag_def: &TagDef) -> bool {
-        if tag_def.required_parents.is_empty() {
-            return true;
-        }
-
-        if let Some(parent) = stack.last() {
-            tag_def
-                .required_parents
-                .iter()
-                .any(|&r| r.eq_ignore_ascii_case(&parent.name))
-        } else {
-            false
-        }
+    /// Checks if required parent tags are present (for resolved tags).
+    fn check_required_parents_resolved(&self, stack: &[TagNode], resolved: &ResolvedTag) -> bool {
+        let names: Vec<String> = stack.iter().map(|t| t.name.to_string()).collect();
+        resolved.has_required_parent(&names)
     }
 
     /// Finds the position of a matching open tag in the stack.
@@ -439,15 +460,20 @@ impl Parser {
             .rposition(|t| t.name.eq_ignore_ascii_case(name))
     }
 
-    /// Parses a tag option string into a TagOption.
-    fn parse_option<'a>(&self, arg: Option<&'a str>, _tag_def: &TagDef) -> TagOption<'a> {
+    /// Parses a tag option string into a TagOption (for resolved tags).
+    fn parse_option_resolved<'a>(
+        &self,
+        arg: Option<&'a str>,
+        _resolved: &ResolvedTag,
+    ) -> TagOption<'a> {
         match arg {
             None => TagOption::None,
             Some(s) if s.is_empty() => TagOption::None,
             Some(s) => {
-                // Try to parse as key-value pairs first
-                if s.contains('=') && s.contains(' ') && !s.starts_with('"') && !s.starts_with('\'')
-                {
+                // Try to parse as key-value pairs if it looks like key=value format.
+                // Key-value format starts with an identifier (alphabetic) followed by =
+                // This distinguishes [attach width=100] from [url=http://example.com?foo=bar]
+                if self.looks_like_keyed_options(s) {
                     if let Some(map) = self.parse_keyed_options(s) {
                         return TagOption::Map(map);
                     }
@@ -455,6 +481,21 @@ impl Parser {
                 // Simple scalar value
                 TagOption::Scalar(Cow::Borrowed(s))
             }
+        }
+    }
+
+    /// Checks if a string looks like key=value format (vs a scalar value).
+    /// Key-value format: starts with alphabetic chars, then =
+    /// Scalar format: starts with value directly (URL, number, quoted string, etc.)
+    fn looks_like_keyed_options(&self, s: &str) -> bool {
+        // Find the first non-alphabetic character
+        let first_non_alpha = s.find(|c: char| !c.is_ascii_alphabetic());
+
+        match first_non_alpha {
+            // If the first non-alpha is '=', and there's at least one alpha char before it,
+            // this looks like key=value
+            Some(pos) if pos > 0 && s.as_bytes().get(pos) == Some(&b'=') => true,
+            _ => false,
         }
     }
 
