@@ -1766,7 +1766,1012 @@ mod security {
     }
 
     // ========================================================================
-    // SECTION 9: REGRESSION TESTS
+    // SECTION 9: CONTROL CHARACTER BYPASSES
+    // Goal: Use control characters to bypass protocol/handler detection.
+    // Based on dcwatson/bbcode issue #16 and OWASP Filter Evasion Cheat Sheet.
+    // ========================================================================
+
+    mod control_character_bypasses {
+        use super::*;
+
+        #[test]
+        fn null_before_javascript() {
+            // \x00 before javascript:
+            let result = parse("[url=\x00javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Null byte before javascript blocked"
+            );
+        }
+
+        #[test]
+        fn soh_before_javascript() {
+            // \x01 (Start of Heading) before javascript: - dcwatson/bbcode vulnerability
+            let result = parse("[url=\x01javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "SOH before javascript blocked"
+            );
+        }
+
+        #[test]
+        fn vertical_tab_in_protocol() {
+            // \x0B (vertical tab) in protocol
+            let result = parse("[url=java\x0Bscript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Vertical tab bypass blocked"
+            );
+        }
+
+        #[test]
+        fn form_feed_in_protocol() {
+            // \x0C (form feed) in protocol
+            let result = parse("[url=java\x0Cscript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Form feed bypass blocked"
+            );
+        }
+
+        #[test]
+        fn carriage_return_in_protocol() {
+            // \x0D (carriage return) in protocol
+            let result = parse("[url=java\x0Dscript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Carriage return bypass blocked"
+            );
+        }
+
+        #[test]
+        fn bell_character_before_javascript() {
+            // \x07 (bell) before javascript:
+            let result = parse("[url=\x07javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Bell character bypass blocked"
+            );
+        }
+
+        #[test]
+        fn backspace_in_protocol() {
+            // \x08 (backspace) in protocol
+            let result = parse("[url=java\x08script:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Backspace bypass blocked"
+            );
+        }
+
+        #[test]
+        fn multiple_control_chars() {
+            // Multiple control characters combined
+            let result = parse("[url=\x01\x02\x03javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Multiple control chars bypass blocked"
+            );
+        }
+
+        #[test]
+        fn control_char_after_colon() {
+            // Control char after the colon
+            let result = parse("[url=javascript:\x00alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Control char after colon blocked"
+            );
+        }
+
+        #[test]
+        fn img_control_char_bypass() {
+            let result = parse("[img]\x01javascript:alert(1)[/img]");
+            assert!(
+                !result.contains("<img"),
+                "Control char in img src blocked"
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 10: ADDITIONAL EVENT HANDLERS (HTML5 & Legacy)
+    // Goal: Test comprehensive list of event handlers.
+    // ========================================================================
+
+    mod additional_event_handlers {
+        use super::*;
+
+        // HTML5 Event Handlers
+        #[test]
+        fn onanimationstart_injection() {
+            let result = parse(r#"[url=http://x.com" onanimationstart="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onanimationstart"),
+                "onanimationstart blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onanimationend_injection() {
+            let result = parse(r#"[url=http://x.com" onanimationend="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onanimationend"),
+                "onanimationend blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ontransitionend_injection() {
+            let result = parse(r#"[url=http://x.com" ontransitionend="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ontransitionend"),
+                "ontransitionend blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onwheel_injection() {
+            let result = parse(r#"[url=http://x.com" onwheel="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onwheel"),
+                "onwheel blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onscroll_injection() {
+            let result = parse(r#"[url=http://x.com" onscroll="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onscroll"),
+                "onscroll blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn oncopy_injection() {
+            let result = parse(r#"[url=http://x.com" oncopy="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "oncopy"),
+                "oncopy blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onpaste_injection() {
+            let result = parse(r#"[url=http://x.com" onpaste="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onpaste"),
+                "onpaste blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn oncut_injection() {
+            let result = parse(r#"[url=http://x.com" oncut="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "oncut"),
+                "oncut blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ondrag_injection() {
+            let result = parse(r#"[url=http://x.com" ondrag="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ondrag"),
+                "ondrag blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ondrop_injection() {
+            let result = parse(r#"[url=http://x.com" ondrop="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ondrop"),
+                "ondrop blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onsearch_injection() {
+            let result = parse(r#"[url=http://x.com" onsearch="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onsearch"),
+                "onsearch blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn oncontextmenu_injection() {
+            let result = parse(r#"[url=http://x.com" oncontextmenu="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "oncontextmenu"),
+                "oncontextmenu blocked. Output: {}",
+                result
+            );
+        }
+
+        // Legacy event handlers for older browsers
+        #[test]
+        fn onstart_marquee_injection() {
+            // onstart is used by <marquee> element
+            let result = parse(r#"[url=http://x.com" onstart="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onstart"),
+                "onstart blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onfinish_marquee_injection() {
+            // onfinish is used by <marquee> element
+            let result = parse(r#"[url=http://x.com" onfinish="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onfinish"),
+                "onfinish blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onbounce_marquee_injection() {
+            // onbounce is used by <marquee> element
+            let result = parse(r#"[url=http://x.com" onbounce="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onbounce"),
+                "onbounce blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onbeforeprint_injection() {
+            let result = parse(r#"[url=http://x.com" onbeforeprint="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onbeforeprint"),
+                "onbeforeprint blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onafterprint_injection() {
+            let result = parse(r#"[url=http://x.com" onafterprint="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onafterprint"),
+                "onafterprint blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onhashchange_injection() {
+            let result = parse(r#"[url=http://x.com" onhashchange="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onhashchange"),
+                "onhashchange blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onpopstate_injection() {
+            let result = parse(r#"[url=http://x.com" onpopstate="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onpopstate"),
+                "onpopstate blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onstorage_injection() {
+            let result = parse(r#"[url=http://x.com" onstorage="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onstorage"),
+                "onstorage blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ontoggle_injection() {
+            let result = parse(r#"[url=http://x.com" ontoggle="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ontoggle"),
+                "ontoggle blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onpointerdown_injection() {
+            let result = parse(r#"[url=http://x.com" onpointerdown="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onpointerdown"),
+                "onpointerdown blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn onpointerup_injection() {
+            let result = parse(r#"[url=http://x.com" onpointerup="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onpointerup"),
+                "onpointerup blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ontouchstart_injection() {
+            let result = parse(r#"[url=http://x.com" ontouchstart="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ontouchstart"),
+                "ontouchstart blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn ontouchend_injection() {
+            let result = parse(r#"[url=http://x.com" ontouchend="alert(1)]Click[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "ontouchend"),
+                "ontouchend blocked. Output: {}",
+                result
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 11: RAW HTML TAG INJECTION (EXTENDED)
+    // Goal: Test more HTML tags that could be used for XSS.
+    // ========================================================================
+
+    mod extended_html_injection {
+        use super::*;
+
+        // Form-based attacks
+        #[test]
+        fn raw_form_tag() {
+            let result = parse("<form action=\"javascript:alert(1)\"><input type=\"submit\"></form>");
+            assert!(!result.contains("<form"), "Form tag escaped");
+        }
+
+        #[test]
+        fn raw_input_tag() {
+            let result = parse(r#"<input onfocus="alert(1)" autofocus>"#);
+            assert!(!result.contains("<input"), "Input tag escaped");
+        }
+
+        #[test]
+        fn raw_button_tag() {
+            let result = parse(r#"<button onclick="alert(1)">Click</button>"#);
+            assert!(!result.contains("<button"), "Button tag escaped");
+        }
+
+        #[test]
+        fn raw_textarea_tag() {
+            let result = parse(r#"<textarea onfocus="alert(1)">text</textarea>"#);
+            assert!(!result.contains("<textarea"), "Textarea tag escaped");
+        }
+
+        #[test]
+        fn raw_select_tag() {
+            let result = parse(r#"<select onfocus="alert(1)"><option>x</option></select>"#);
+            assert!(!result.contains("<select"), "Select tag escaped");
+        }
+
+        // Metadata tags
+        #[test]
+        fn raw_meta_refresh() {
+            let result = parse(r#"<meta http-equiv="refresh" content="0;url=javascript:alert(1)">"#);
+            assert!(!result.contains("<meta"), "Meta tag escaped");
+        }
+
+        #[test]
+        fn raw_link_tag() {
+            let result = parse(r#"<link rel="stylesheet" href="javascript:alert(1)">"#);
+            assert!(!result.contains("<link"), "Link tag escaped");
+        }
+
+        #[test]
+        fn raw_base_tag() {
+            let result = parse(r#"<base href="javascript:alert(1)">"#);
+            assert!(!result.contains("<base"), "Base tag escaped");
+        }
+
+        #[test]
+        fn raw_style_tag() {
+            let result = parse("<style>*{background:url('javascript:alert(1)')}</style>");
+            assert!(!result.contains("<style"), "Style tag escaped");
+        }
+
+        // Media tags
+        #[test]
+        fn raw_video_tag() {
+            let result = parse(r#"<video><source onerror="alert(1)"></video>"#);
+            assert!(!result.contains("<video"), "Video tag escaped");
+        }
+
+        #[test]
+        fn raw_audio_tag() {
+            let result = parse(r#"<audio src="x" onerror="alert(1)">"#);
+            assert!(!result.contains("<audio"), "Audio tag escaped");
+        }
+
+        #[test]
+        fn raw_source_tag() {
+            let result = parse(r#"<source onerror="alert(1)">"#);
+            assert!(!result.contains("<source"), "Source tag escaped");
+        }
+
+        #[test]
+        fn raw_track_tag() {
+            let result = parse(r#"<track default src="x" oncuechange="alert(1)">"#);
+            assert!(!result.contains("<track"), "Track tag escaped");
+        }
+
+        // Legacy/deprecated but still dangerous
+        #[test]
+        fn raw_marquee_tag() {
+            let result = parse(r#"<marquee onstart="alert(1)">text</marquee>"#);
+            assert!(!result.contains("<marquee"), "Marquee tag escaped");
+        }
+
+        #[test]
+        fn raw_bgsound_tag() {
+            // Legacy IE tag
+            let result = parse(r#"<bgsound src="javascript:alert(1)">"#);
+            assert!(!result.contains("<bgsound"), "Bgsound tag escaped");
+        }
+
+        #[test]
+        fn raw_applet_tag() {
+            let result = parse(r#"<applet code="javascript:alert(1)"></applet>"#);
+            assert!(!result.contains("<applet"), "Applet tag escaped");
+        }
+
+        // Other dangerous tags
+        #[test]
+        fn raw_math_tag() {
+            let result = parse(r#"<math><maction actiontype="statusline">text</maction></math>"#);
+            assert!(!result.contains("<math"), "Math tag escaped");
+        }
+
+        #[test]
+        fn raw_details_tag() {
+            let result = parse(r#"<details open ontoggle="alert(1)">text</details>"#);
+            assert!(!result.contains("<details") || !result.contains("ontoggle"), "Details/ontoggle escaped");
+        }
+
+        #[test]
+        fn raw_dialog_tag() {
+            let result = parse(r#"<dialog open onclose="alert(1)">text</dialog>"#);
+            assert!(!result.contains("<dialog"), "Dialog tag escaped");
+        }
+
+        // XML/Namespace attacks
+        #[test]
+        fn svg_xlink_href() {
+            let result = parse(r#"<svg><a xlink:href="javascript:alert(1)"><text>click</text></a></svg>"#);
+            assert!(!result.contains("<svg"), "SVG with xlink:href escaped");
+        }
+
+        #[test]
+        fn svg_animate() {
+            let result = parse(r#"<svg><animate onbegin="alert(1)"></animate></svg>"#);
+            assert!(!result.contains("<svg"), "SVG animate escaped");
+        }
+
+        #[test]
+        fn svg_set() {
+            let result = parse(r#"<svg><set onbegin="alert(1)"></set></svg>"#);
+            assert!(!result.contains("<svg"), "SVG set escaped");
+        }
+
+        #[test]
+        fn svg_foreignobject() {
+            let result = parse(r#"<svg><foreignObject><iframe src="javascript:alert(1)"></iframe></foreignObject></svg>"#);
+            assert!(!result.contains("<svg"), "SVG foreignObject escaped");
+        }
+
+        // Keygen (deprecated but some browsers support)
+        #[test]
+        fn raw_keygen_tag() {
+            let result = parse(r#"<keygen autofocus onfocus="alert(1)">"#);
+            assert!(!result.contains("<keygen"), "Keygen tag escaped");
+        }
+    }
+
+    // ========================================================================
+    // SECTION 12: DATA URI VARIATIONS
+    // Goal: Test various data: URI MIME types and encodings.
+    // ========================================================================
+
+    mod data_uri_variations {
+        use super::*;
+
+        #[test]
+        fn data_text_html() {
+            let result = parse("[url=data:text/html,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:text/html blocked"
+            );
+        }
+
+        #[test]
+        fn data_text_html_base64() {
+            // PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg== = <script>alert(1)</script>
+            let result = parse("[url=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:text/html;base64 blocked"
+            );
+        }
+
+        #[test]
+        fn data_application_xhtml() {
+            let result = parse("[url=data:application/xhtml+xml,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:application/xhtml+xml blocked"
+            );
+        }
+
+        #[test]
+        fn data_image_svg() {
+            // SVG with embedded script
+            let result = parse("[url=data:image/svg+xml,<svg onload='alert(1)'>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:image/svg+xml blocked"
+            );
+        }
+
+        #[test]
+        fn data_image_svg_base64() {
+            // Base64 encoded SVG with onload
+            let result = parse("[url=data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9J2FsZXJ0KDEpJz4=]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:image/svg+xml;base64 blocked"
+            );
+        }
+
+        #[test]
+        fn data_text_css() {
+            let result = parse("[url=data:text/css,.x{background:url(javascript:alert(1))}]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data:text/css blocked"
+            );
+        }
+
+        #[test]
+        fn data_charset_param() {
+            let result = parse("[url=data:text/html;charset=utf-8,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data: with charset blocked"
+            );
+        }
+
+        #[test]
+        fn data_mixed_case() {
+            let result = parse("[url=DaTa:text/html,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "DaTa: case insensitive blocked"
+            );
+        }
+
+        #[test]
+        fn data_in_img() {
+            let result = parse("[img]data:image/svg+xml,<svg onload='alert(1)'>[/img]");
+            assert!(
+                !result.contains("<img"),
+                "data: in img src blocked"
+            );
+        }
+
+        #[test]
+        fn data_with_whitespace() {
+            let result = parse("[url=data:  text/html,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"data:"),
+                "data: with whitespace blocked"
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 13: HTML ENTITY ENCODING VARIATIONS
+    // Goal: Test various HTML entity formats and edge cases.
+    // ========================================================================
+
+    mod html_entity_variations {
+        use super::*;
+
+        // Entities without semicolons (some browsers accept these)
+        #[test]
+        fn javascript_entities_no_semicolon() {
+            // &#106 without semicolon for 'j'
+            let result = parse("[url=&#106avascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Entity without semicolon blocked"
+            );
+        }
+
+        #[test]
+        fn hex_entities_no_semicolon() {
+            // &#x6A without semicolon for 'j'
+            let result = parse("[url=&#x6Aavascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Hex entity without semicolon blocked"
+            );
+        }
+
+        // Long numeric entities
+        #[test]
+        fn padded_numeric_entities() {
+            // &#0000106; = 'j' with padding zeros
+            let result = parse("[url=&#0000106;avascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Padded numeric entity blocked"
+            );
+        }
+
+        #[test]
+        fn padded_hex_entities() {
+            // &#x00006A; = 'j' with padding zeros
+            let result = parse("[url=&#x00006A;avascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Padded hex entity blocked"
+            );
+        }
+
+        // Named entities for special chars
+        #[test]
+        fn named_entity_lt_gt() {
+            let result = parse("[url=&lt;script&gt;]Click[/url]");
+            // Should not produce executable content
+            assert!(!result.contains("<script>"), "Named entities don't produce HTML");
+        }
+
+        #[test]
+        fn mixed_entity_styles() {
+            // Mix of decimal and hex entities
+            let result = parse("[url=&#106;&#x61;&#118;&#x61;script:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Mixed entity styles blocked"
+            );
+        }
+
+        #[test]
+        fn uppercase_hex_entities() {
+            // &#X6A instead of &#x6a
+            let result = parse("[url=&#X6Aavascript:alert(1)]Click[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Uppercase X in hex entity blocked"
+            );
+        }
+
+        // Entity in event handler name
+        #[test]
+        fn entity_in_handler_name() {
+            let result = parse(r#"[url=http://x.com" &#x6F;nclick="alert(1)]Click[/url]"#);
+            // &#x6F; = 'o', so this tries to spell "onclick"
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "Entity in handler name blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn double_encoding() {
+            // &amp;#106; = &#106; when decoded once
+            let result = parse("[url=&amp;#106;avascript:alert(1)]Click[/url]");
+            // After one decode: &#106;avascript which could become javascript
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Double encoded entity blocked"
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 14: phpBB & FORUM SOFTWARE SPECIFIC EXPLOITS
+    // Based on exploit-db.com findings and CVEs.
+    // ========================================================================
+
+    mod forum_specific_exploits {
+        use super::*;
+
+        // phpBB 2.0.6 - CVE-2004-1315 style attack
+        #[test]
+        fn phpbb_quote_onclick_breakout() {
+            let result = parse(r#"[url=http://www.example.com" onclick="alert('xss')]text[/url]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "phpBB quote breakout blocked. Output: {}",
+                result
+            );
+        }
+
+        // JForum 2.08 - color tag style injection
+        #[test]
+        fn jforum_color_style_injection() {
+            let result = parse(r#"[color=red' style='font-size:50px' /onMouseOver='alert(document.cookie)']test[/color]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onmouseover"),
+                "JForum color injection blocked. Output: {}",
+                result
+            );
+            assert!(
+                !result.contains("style='font-size:50px'"),
+                "Injected style blocked. Output: {}",
+                result
+            );
+        }
+
+        // webSPELL - img onerror
+        #[test]
+        fn webspell_img_onerror() {
+            let result = parse(r#"[img]http://x.jpg" onerror="alert(1)[/img]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onerror"),
+                "webSPELL img onerror blocked. Output: {}",
+                result
+            );
+        }
+
+        // SMF (Simple Machines Forum) style
+        #[test]
+        fn smf_url_breakout() {
+            let result = parse(r#"[url=javascript:alert(String.fromCharCode(88,83,83))]XSS[/url]"#);
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "SMF javascript URL blocked"
+            );
+        }
+
+        // PHP-Fusion style
+        #[test]
+        fn phpfusion_nested_tags() {
+            let result = parse("[url=[img]javascript:alert(1)[/img]]text[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "PHP-Fusion nested tag blocked"
+            );
+        }
+
+        // Friendica style - multiple tags with injection
+        #[test]
+        fn friendica_color_injection() {
+            let result = parse("[color=\"#000000\" onclick=\"alert(1)\"]test[/color]");
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "Friendica color onclick blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn friendica_size_injection() {
+            let result = parse("[size=\"30\" onclick=\"alert(1)\"]test[/size]");
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "Friendica size onclick blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn friendica_font_injection() {
+            let result = parse("[font=\"Arial\" onclick=\"alert(1)\"]test[/font]");
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "Friendica font onclick blocked. Output: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn friendica_img_link_injection() {
+            let result = parse("[img=200x100]javascript:alert(1)[/img]");
+            assert!(
+                !result.to_lowercase().contains("src=\"javascript:"),
+                "Friendica img javascript blocked"
+            );
+        }
+
+        #[test]
+        fn friendica_url_link_injection() {
+            let result = parse("[url=\"javascript:alert(1)\"]Click me[/url]");
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "Friendica url javascript blocked"
+            );
+        }
+
+        // AOblogger/MyBloggie style
+        #[test]
+        fn aoblogger_script_tag() {
+            let result = parse("[url]<script>alert(1)</script>[/url]");
+            assert!(!result.contains("<script>"), "Script in URL content blocked");
+        }
+
+        // PostBoard style
+        #[test]
+        fn postboard_onclick_injection() {
+            let result = parse(r#"[url=http://x.com onclick=alert(1)]test[/url]"#);
+            // Note: no quotes around onclick value
+            // Safe if: tag is rejected (rendered as raw BBCode) OR no onclick in HTML
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "PostBoard onclick without quotes blocked. Output: {}",
+                result
+            );
+        }
+
+        // Land Down Under style
+        #[test]
+        fn ldu_email_onclick() {
+            let result = parse(r#"[email]test@test.com onclick=alert(1)[/email]"#);
+            // Safe if: email is rejected (rendered as raw BBCode) OR no onclick in HTML
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "LDU email onclick blocked. Output: {}",
+                result
+            );
+        }
+
+        // W-Agora style
+        #[test]
+        fn wagora_script_src() {
+            let result = parse("[url]http://x.com/x.js[/url]<script src=http://evil.com/xss.js></script>");
+            assert!(!result.contains("<script"), "W-Agora script injection blocked");
+        }
+
+        // eoCMS style
+        #[test]
+        fn eocms_img_src_injection() {
+            let result = parse(r#"[img]http://x/x.gif" onmouseover="alert(1)[/img]"#);
+            assert!(
+                !has_dangerous_event_handler(&result, "onmouseover"),
+                "eoCMS img onmouseover blocked. Output: {}",
+                result
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 15: ADDITIONAL PROTOCOL SCHEMES
+    // Goal: Block additional dangerous URL protocols.
+    // ========================================================================
+
+    mod additional_protocols {
+        use super::*;
+
+        #[test]
+        fn file_protocol() {
+            let result = parse("[url=file:///etc/passwd]Click[/url]");
+            assert!(
+                !result.contains("href=\"file:"),
+                "file: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn ftp_protocol() {
+            // FTP is often blocked in high-security contexts
+            let result = parse("[url=ftp://evil.com/malware.exe]Download[/url]");
+            // This may or may not be blocked depending on allowed_schemes config
+            // But it should never contain javascript:
+            assert!(!result.contains("javascript:"));
+        }
+
+        #[test]
+        fn telnet_protocol() {
+            let result = parse("[url=telnet://evil.com]Connect[/url]");
+            assert!(
+                !result.contains("href=\"telnet:"),
+                "telnet: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn ms_its_protocol() {
+            // IE-specific protocol
+            let result = parse("[url=ms-its:mhtml:file://c:\\foo.mht!http://www.example.com/chm.htm::evilscript.chm]Click[/url]");
+            assert!(
+                !result.contains("href=\"ms-its:"),
+                "ms-its: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn mhtml_protocol() {
+            let result = parse("[url=mhtml:file://C:/foo.mhtml]Click[/url]");
+            assert!(
+                !result.contains("href=\"mhtml:"),
+                "mhtml: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn jar_protocol() {
+            // Java archive protocol - can be used for XSS
+            let result = parse("[url=jar:https://example.com/evil.jar!/attack.html]Click[/url]");
+            assert!(
+                !result.contains("href=\"jar:"),
+                "jar: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn about_protocol() {
+            let result = parse("[url=about:blank]Click[/url]");
+            // about: can sometimes be used for XSS in certain contexts
+            // Main check is it doesn't contain javascript
+            assert!(!result.to_lowercase().contains("javascript:"));
+        }
+
+        #[test]
+        fn view_source_protocol() {
+            let result = parse("[url=view-source:javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.contains("href=\"view-source:"),
+                "view-source: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn res_protocol() {
+            // Windows resource protocol
+            let result = parse("[url=res://ieframe.dll/acr_error.htm#javascript:alert(1)]Click[/url]");
+            assert!(
+                !result.contains("href=\"res:"),
+                "res: protocol blocked"
+            );
+        }
+
+        #[test]
+        fn blob_protocol() {
+            let result = parse("[url=blob:https://example.com/12345678-1234-1234-1234-123456789012]Click[/url]");
+            assert!(
+                !result.contains("href=\"blob:"),
+                "blob: protocol blocked"
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 16: REGRESSION TESTS
     // ========================================================================
 
     mod regression {
