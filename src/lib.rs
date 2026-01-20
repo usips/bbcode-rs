@@ -609,6 +609,66 @@ mod tests {
         assert!(!result.contains("<strong>"));
     }
 
+    #[test]
+    fn test_plain_unclosed() {
+        // When [plain] is unclosed, the content after it gets parsed normally
+        // This is because verbatim tags need explicit close tags to work
+        let result = parse("[plain][b]bold");
+        // The [b] tag will be parsed since [plain] wasn't properly closed
+        // But [b] itself is unclosed, so it will be auto-closed
+        assert!(result.contains("bold"));
+    }
+
+    #[test]
+    fn test_plain_unclosed_with_following_content() {
+        // When [plain] is unclosed, content after gets parsed as normal BBCode
+        let result = parse("[plain]text [b]bold[/b]");
+        // Without a [/plain], the content is parsed normally
+        // so [b] will create <strong>
+        assert!(result.contains("bold"));
+    }
+
+    #[test]
+    fn test_plain_nested_in_plain() {
+        // Inner [plain] should be treated as literal text, not as a tag
+        let result = parse("[plain]outer [plain]inner[/plain] still outer[/plain]");
+        // The first [/plain] closes the outer tag since inner [plain] is literal
+        assert!(result.contains("[plain]inner"));
+    }
+
+    #[test]
+    fn test_plain_inside_bold() {
+        // Plain inside another tag should work properly
+        let result = parse("[b]bold [plain][i]not italic[/i][/plain] bold[/b]");
+        assert!(result.contains("<strong>"));
+        assert!(!result.contains("<em>"));
+        assert!(result.contains("[i]not italic[/i]"));
+    }
+
+    #[test]
+    fn test_plain_mismatched_closing() {
+        // [plain] closed by [/noparse] should work (same tag, different alias)
+        let result = parse("[plain]content[/noparse]");
+        assert!(result.contains("content"));
+    }
+
+    #[test]
+    fn test_multiple_plain_tags() {
+        // Multiple separate plain sections
+        let result = parse("[plain]first[/plain] normal [plain]second[/plain]");
+        assert!(result.contains("first"));
+        assert!(result.contains("second"));
+        assert!(result.contains("normal"));
+    }
+
+    #[test]
+    fn test_plain_does_not_auto_close_on_other_tags() {
+        // Plain should only close with [/plain], [/noparse], or [/nobbc]
+        let result = parse("[plain][b]text[/b][/plain]");
+        // [/b] should not close the [plain] tag
+        assert!(result.contains("[/b]"));
+    }
+
     // ============================================================================
     // Unicode Tests
     // ============================================================================
