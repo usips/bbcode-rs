@@ -708,7 +708,7 @@ mod tests {
     // Auto-Closing and Nesting Tests
     // ============================================================================
     //
-    // BBCode parser auto-closing behavior:
+    // BBCode parser auto-closing behavior (XenForo-compatible):
     //
     // 1. UNCLOSED TAGS: Tags that aren't explicitly closed are auto-closed at
     //    the end of input in reverse order (innermost first).
@@ -718,11 +718,13 @@ mod tests {
     //    properly in the HTML output.
     //    Example: [b][i]text[/i][/b] → <strong><em>text</em></strong>
     //
-    // 3. MISMATCHED CLOSING: When tags are closed out of order, the parser
-    //    finds the matching open tag and closes it, marking intervening tags
-    //    as "broken" (moved/flattened).
-    //    Example: [b][i]text[/b][/i] → <em>text</em>[/i]
-    //    (The [/b] closes [b], breaking [i]; [/i] has no match → literal text)
+    // 3. XENFORO AUTO-CLOSING: When tags are closed out of order, the parser
+    //    auto-closes intervening tags first, then closes the requested tag.
+    //    This maintains proper nesting structure.
+    //    Example: [b][i]text[/b][/i] → <strong><em>text</em></strong>[/i]
+    //    (The [/b] auto-closes [i], then closes [b]; [/i] has no match → literal)
+    //    Example: [b][i][u]text[/b] → <strong><em><u>text</u></em></strong>
+    //    (The [/b] auto-closes [u] and [i], then closes [b])
     //
     // 4. VERBATIM TAGS: Tags like [plain], [code], [icode] require explicit
     //    closing to work. If unclosed, their content is parsed normally.
@@ -756,17 +758,69 @@ mod tests {
     fn test_mismatched_closing_order() {
         // Tags closed in wrong order: [b][i]text[/b][/i]
         let result = parse("[b][i]text[/b][/i]");
-        // When [/b] closes, [i] is intervening - it gets broken/moved
-        // The [/i] at the end has no matching open tag, so appears as text
-        assert_eq!(result, "<em>text</em>[/i]");
+        // XenForo behavior: [/b] auto-closes [i] first, then closes [b]
+        // Result: <strong><em>text</em></strong>
+        // The final [/i] has no matching open tag, so appears as literal text
+        assert_eq!(result, "<strong><em>text</em></strong>[/i]");
+    }
+
+    #[test]
+    fn test_intervening_tag_auto_closes() {
+        // When closing [b], the intervening [i] should auto-close
+        let parser = Parser::new();
+        let doc = parser.parse("[b][i]t[/b]");
+
+        println!("AST:");
+        for (idx, node) in doc.nodes.iter().enumerate() {
+            println!("  Node {}: {:?}", idx, node);
+        }
+
+        let renderer = Renderer::new();
+        let result = renderer.render(&doc);
+        println!("Rendered: '{}'", result);
+
+        // XenForo behavior: should be <strong><em>t</em></strong>
+        // The [i] auto-closes before [b] closes
+        assert_eq!(result, "<strong><em>t</em></strong>");
     }
 
     #[test]
     fn test_mismatched_closing_order_triple() {
         // Three tags with mismatched closing: [b][i][u]text[/b][/u][/i]
         let result = parse("[b][i][u]text[/b][/u][/i]");
-        // When [/b] closes, both [i] and [u] are intervening
-        assert!(result.contains("text"));
+        // XenForo behavior: [/b] auto-closes [u] and [i], then closes [b]
+        // Result: <strong><em><u>text</u></em></strong>
+        // The [/u] and [/i] at the end have no matching tags
+        assert_eq!(result, "<strong><em><u>text</u></em></strong>[/u][/i]");
+    }
+
+    #[test]
+    fn test_xenforo_nested_auto_close_single() {
+        // Single intervening tag
+        let result = parse("[b][i]text[/b]");
+        assert_eq!(result, "<strong><em>text</em></strong>");
+    }
+
+    #[test]
+    fn test_xenforo_nested_auto_close_double() {
+        // Two intervening tags
+        let result = parse("[b][i][u]text[/b]");
+        assert_eq!(result, "<strong><em><u>text</u></em></strong>");
+    }
+
+    #[test]
+    fn test_xenforo_nested_auto_close_with_content_between() {
+        // Content between tags
+        let result = parse("[b]bold [i]italic[/b]");
+        assert_eq!(result, "<strong>bold <em>italic</em></strong>");
+    }
+
+    #[test]
+    fn test_xenforo_partial_overlap() {
+        // [b][i]text1[/b] text2 [/i]
+        // [/b] auto-closes [i], then [/i] has no match
+        let result = parse("[b][i]text1[/b] text2 [/i]");
+        assert_eq!(result, "<strong><em>text1</em></strong> text2 [/i]");
     }
 
     #[test]

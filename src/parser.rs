@@ -309,23 +309,25 @@ impl Parser {
                         // Close all tags from pos to end
                         let mut closed = stack.split_off(pos);
 
-                        if let Some(mut tag_node) = closed.pop() {
-                            // The matching tag
+                        if let Some(mut tag_node) = closed.first_mut() {
+                            // The matching tag is at the front of closed list
                             tag_node.raw_close = Cow::Borrowed(*raw);
                             tag_node.mark_closed();
 
-                            // Add any intervening unclosed tags as children (auto-close)
-                            for mut unclosed in closed.into_iter().rev() {
-                                // Move children to parent
-                                let children = std::mem::take(&mut unclosed.children);
-                                for child in children {
-                                    tag_node.children.push(child);
-                                }
-                                // The unclosed tag itself becomes broken/text
-                                unclosed.mark_broken();
+                            // Auto-close any intervening tags (XenForo behavior)
+                            // Intervening tags are everything after the first element
+                            for unclosed in closed.iter_mut().skip(1).rev() {
+                                unclosed.mark_closed();
                             }
 
-                            let node = Node::Tag(tag_node);
+                            // Build the nested structure from inside out
+                            let mut result = closed.pop().unwrap(); // Start with innermost
+                            while let Some(mut parent) = closed.pop() {
+                                parent.children.push(Node::Tag(result));
+                                result = parent;
+                            }
+
+                            let node = Node::Tag(result);
                             self.push_to_stack_or_doc(&mut stack, &mut doc, node);
                         }
                     } else {
