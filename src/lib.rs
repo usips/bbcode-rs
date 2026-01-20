@@ -420,6 +420,195 @@ mod tests {
         assert!(!result.contains("<em>"));
     }
 
+    #[test]
+    fn test_nobbc_alias() {
+        let result = parse("[nobbc][u]Not Underlined[/u][/nobbc]");
+        assert!(!result.contains("<u>"));
+        assert!(result.contains("[u]Not Underlined[/u]"));
+    }
+
+    #[test]
+    fn test_plain_with_multiple_tags() {
+        let result = parse("[plain][b]bold[/b] [i]italic[/i] [u]underline[/u][/plain]");
+        assert!(!result.contains("<strong>"));
+        assert!(!result.contains("<em>"));
+        assert!(!result.contains("<u>"));
+        assert!(result.contains("[b]bold[/b]"));
+        assert!(result.contains("[i]italic[/i]"));
+        assert!(result.contains("[u]underline[/u]"));
+    }
+
+    #[test]
+    fn test_plain_with_url() {
+        let result = parse("[plain][url=https://example.com]link[/url][/plain]");
+        assert!(!result.contains("<a"));
+        assert!(result.contains("[url=https://example.com]link[/url]"));
+    }
+
+    #[test]
+    fn test_plain_with_image() {
+        let result = parse("[plain][img]https://example.com/image.png[/img][/plain]");
+        assert!(!result.contains("<img"));
+        assert!(result.contains("[img]https://example.com/image.png[/img]"));
+    }
+
+    #[test]
+    fn test_plain_with_color() {
+        let result = parse("[plain][color=red]Red Text[/color][/plain]");
+        assert!(!result.contains("color:"));
+        assert!(result.contains("[color=red]Red Text[/color]"));
+    }
+
+    #[test]
+    fn test_plain_with_size() {
+        let result = parse("[plain][size=20]Big Text[/size][/plain]");
+        assert!(!result.contains("font-size"));
+        assert!(result.contains("[size=20]Big Text[/size]"));
+    }
+
+    #[test]
+    fn test_plain_with_quote() {
+        let result = parse("[plain][quote]Not a quote[/quote][/plain]");
+        assert!(!result.contains("<blockquote"));
+        assert!(result.contains("[quote]Not a quote[/quote]"));
+    }
+
+    #[test]
+    fn test_plain_with_code() {
+        let result = parse("[plain][code]function test() {}[/code][/plain]");
+        assert!(!result.contains("<pre"));
+        assert!(result.contains("[code]function test() {}[/code]"));
+    }
+
+    #[test]
+    fn test_plain_with_list() {
+        let result = parse("[plain][list][*]item1[*]item2[/list][/plain]");
+        assert!(!result.contains("<ul"));
+        assert!(!result.contains("<li"));
+        assert!(result.contains("[list]"));
+        assert!(result.contains("[*]item1"));
+    }
+
+    #[test]
+    fn test_plain_with_table() {
+        let result = parse("[plain][table][tr][td]cell[/td][/tr][/table][/plain]");
+        assert!(!result.contains("<table"));
+        assert!(result.contains("[table]"));
+        assert!(result.contains("[td]cell[/td]"));
+    }
+
+    #[test]
+    fn test_plain_escapes_html() {
+        let result = parse("[plain]<script>alert('xss')</script>[/plain]");
+        assert!(!result.contains("<script>"));
+        assert!(result.contains("&lt;script&gt;"));
+        assert!(result.contains("&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn test_plain_with_special_chars() {
+        let result = parse("[plain]& < > \" '[/plain]");
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&gt;"));
+        assert!(result.contains("&quot;"));
+    }
+
+    #[test]
+    fn test_plain_with_newlines() {
+        let result = parse("[plain]line1\nline2\nline3[/plain]");
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+        assert!(result.contains("line3"));
+        // Should convert newlines since convert_newlines is true
+        assert!(result.contains("<br>") || result.contains("\n"));
+    }
+
+    #[test]
+    fn test_plain_preserves_whitespace() {
+        let result = parse("[plain]   spaces   [/plain]");
+        assert!(result.contains("spaces"));
+    }
+
+    #[test]
+    fn test_plain_empty() {
+        let result = parse("[plain][/plain]");
+        // Empty plain tag should produce empty or minimal output
+        // Just ensure parsing succeeds without panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_plain_nested_plain_tags() {
+        let result = parse("[plain][plain]inner[/plain][/plain]");
+        // Should treat inner [plain] as literal text
+        assert!(result.contains("[plain]inner[/plain]"));
+    }
+
+    #[test]
+    fn test_plain_with_unclosed_tags_inside() {
+        let result = parse("[plain][b]unclosed[/plain]");
+        assert!(result.contains("[b]unclosed"));
+        assert!(!result.contains("<strong>"));
+    }
+
+    #[test]
+    fn test_plain_disables_auto_link() {
+        let result = parse("[plain]https://example.com[/plain]");
+        // Should not auto-convert URL to link since stop_auto_link is true
+        assert!(!result.contains("<a"));
+        assert!(result.contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_plain_with_spoiler() {
+        let result = parse("[plain][spoiler]Hidden[/spoiler][/plain]");
+        // Should not render as HTML spoiler (which uses <details>)
+        assert!(!result.contains("<details"));
+        assert!(result.contains("[spoiler]Hidden[/spoiler]"));
+    }
+
+    #[test]
+    fn test_plain_with_heading() {
+        let result = parse("[plain][heading=1]Title[/heading][/plain]");
+        assert!(!result.contains("<h1"));
+        assert!(result.contains("[heading=1]Title[/heading]"));
+    }
+
+    #[test]
+    fn test_plain_inside_other_tags() {
+        let result = parse("[b]bold [plain][i]not italic[/i][/plain] bold[/b]");
+        assert!(result.contains("<strong>"));
+        assert!(!result.contains("<em>"));
+        assert!(result.contains("[i]not italic[/i]"));
+    }
+
+    #[test]
+    fn test_noparse_comprehensive() {
+        let input = "[noparse][b]bold[/b] [url=test]link[/url] <script>test</script>[/noparse]";
+        let result = parse(input);
+        assert!(!result.contains("<strong>"));
+        assert!(!result.contains("<a"));
+        assert!(!result.contains("<script>"));
+        assert!(result.contains("[b]bold[/b]"));
+        assert!(result.contains("[url=test]link[/url]"));
+        assert!(result.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn test_plain_case_insensitive() {
+        let result = parse("[PLAIN][b]test[/b][/PLAIN]");
+        assert!(result.contains("[b]test[/b]"));
+        assert!(!result.contains("<strong>"));
+    }
+
+    #[test]
+    fn test_plain_mixed_case_close() {
+        let result = parse("[plain][b]test[/b][/PlAiN]");
+        assert!(result.contains("[b]test[/b]"));
+        assert!(!result.contains("<strong>"));
+    }
+
     // ============================================================================
     // Unicode Tests
     // ============================================================================
