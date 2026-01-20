@@ -704,6 +704,33 @@ mod tests {
         assert_eq!(result, "<strong></strong>");
     }
 
+    // ============================================================================
+    // Auto-Closing and Nesting Tests
+    // ============================================================================
+    //
+    // BBCode parser auto-closing behavior:
+    //
+    // 1. UNCLOSED TAGS: Tags that aren't explicitly closed are auto-closed at
+    //    the end of input in reverse order (innermost first).
+    //    Example: [b][i]text → <strong><em>text</em></strong>
+    //
+    // 2. PROPER NESTING: When tags are closed in the correct order, they nest
+    //    properly in the HTML output.
+    //    Example: [b][i]text[/i][/b] → <strong><em>text</em></strong>
+    //
+    // 3. MISMATCHED CLOSING: When tags are closed out of order, the parser
+    //    finds the matching open tag and closes it, marking intervening tags
+    //    as "broken" (moved/flattened).
+    //    Example: [b][i]text[/b][/i] → <em>text</em>[/i]
+    //    (The [/b] closes [b], breaking [i]; [/i] has no match → literal text)
+    //
+    // 4. VERBATIM TAGS: Tags like [plain], [code], [icode] require explicit
+    //    closing to work. If unclosed, their content is parsed normally.
+    //    Example: [plain][b]text     → <strong>text</strong>
+    //    Example: [plain][b]text[/plain] → [b]text
+    //
+    // ============================================================================
+
     #[test]
     fn test_unclosed_tag() {
         let result = parse("[b]Bold without close");
@@ -715,6 +742,99 @@ mod tests {
     fn test_unmatched_close() {
         let result = parse("text[/b]more");
         assert!(result.contains("[/b]"));
+    }
+
+    #[test]
+    fn test_multiple_unclosed_nested_tags() {
+        // Multiple nested tags, all unclosed
+        let result = parse("[b][i][u]text");
+        // Auto-closes in proper nested order
+        assert_eq!(result, "<strong><em><u>text</u></em></strong>");
+    }
+
+    #[test]
+    fn test_mismatched_closing_order() {
+        // Tags closed in wrong order: [b][i]text[/b][/i]
+        let result = parse("[b][i]text[/b][/i]");
+        // When [/b] closes, [i] is intervening - it gets broken/moved
+        // The [/i] at the end has no matching open tag, so appears as text
+        assert_eq!(result, "<em>text</em>[/i]");
+    }
+
+    #[test]
+    fn test_mismatched_closing_order_triple() {
+        // Three tags with mismatched closing: [b][i][u]text[/b][/u][/i]
+        let result = parse("[b][i][u]text[/b][/u][/i]");
+        // When [/b] closes, both [i] and [u] are intervening
+        assert!(result.contains("text"));
+    }
+
+    #[test]
+    fn test_properly_nested_closing() {
+        // Properly nested and closed
+        let result = parse("[b][i][u]text[/u][/i][/b]");
+        // Should produce perfectly nested HTML
+        assert_eq!(result, "<strong><em><u>text</u></em></strong>");
+    }
+
+    #[test]
+    fn test_partially_closed_nested() {
+        // Some tags closed, some not
+        let result = parse("[b][i]text[/i] more");
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("<em>"));
+        assert!(result.contains("text"));
+        assert!(result.contains("more"));
+    }
+
+    #[test]
+    fn test_deeply_nested_unclosed() {
+        // Deep nesting without any close tags
+        let result = parse("[b][i][u][s][color=red]deep");
+        assert!(result.contains("deep"));
+        // All tags should auto-close
+    }
+
+    #[test]
+    fn test_interleaved_tags() {
+        // Properly nested tags with proper closing
+        let result = parse("[b][i]text[/i][/b]");
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("<em>"));
+        assert!(result.contains("text"));
+    }
+
+    #[test]
+    fn test_unclosed_block_tag() {
+        // Block-level tags like [quote] should also auto-close
+        let result = parse("[quote]quoted text");
+        assert!(result.contains("quoted text"));
+    }
+
+    #[test]
+    fn test_mixed_block_and_inline_unclosed() {
+        // Mix of block and inline tags, all unclosed
+        let result = parse("[quote][b]bold quote");
+        assert!(result.contains("bold quote"));
+    }
+
+    #[test]
+    fn test_auto_close_preserves_content() {
+        // Ensure content is never lost during auto-closing
+        let result = parse("[b]start [i]middle [u]end");
+        assert!(result.contains("start"));
+        assert!(result.contains("middle"));
+        assert!(result.contains("end"));
+    }
+
+    #[test]
+    fn test_close_tag_after_unclosed_siblings() {
+        // [b][i]text1[/b] text2 [i]text3
+        // First [i] is unclosed, then [b] closes, then another [i]
+        let result = parse("[b][i]text1[/b] text2 [i]text3");
+        assert!(result.contains("text1"));
+        assert!(result.contains("text2"));
+        assert!(result.contains("text3"));
     }
 
     #[test]
