@@ -2833,6 +2833,480 @@ mod security {
             assert!(result.contains("<u>Underline</u>"), "Underline works");
         }
     }
+
+    // ========================================================================
+    // SECTION 17: XENFORO-SPECIFIC SECURITY PATTERNS
+    // Based on XF\BbCode\Renderer\Html.php security validations.
+    // ========================================================================
+
+    mod xenforo_security_patterns {
+        use super::*;
+
+        // --- URL Validation (from XF Html.php:1685) ---
+        // XenForo blocks: data:, https?://data, javascript:, about:
+
+        #[test]
+        fn xf_https_data_url_disguise() {
+            // XenForo specifically blocks https://data URLs (disguised data URLs)
+            let result = parse("[url=https://data:text/html,<script>alert(1)</script>]Click[/url]");
+            // Should not create a dangerous link
+            assert!(
+                !result.contains("<script>"),
+                "https://data disguise blocked"
+            );
+        }
+
+        #[test]
+        fn xf_http_data_url_disguise() {
+            let result = parse("[url=http://data:text/html,<script>alert(1)</script>]Click[/url]");
+            assert!(
+                !result.contains("<script>"),
+                "http://data disguise blocked"
+            );
+        }
+
+        #[test]
+        fn xf_newline_in_url_blocked() {
+            // XenForo blocks URLs containing newlines (line 1680-1683)
+            let result = parse("[url=https://example.com\n/path]Click[/url]");
+            // Either reject the URL or sanitize it
+            if result.contains("href=") {
+                assert!(
+                    !result.contains("href=\"https://example.com\n"),
+                    "Newline in URL should be blocked or sanitized"
+                );
+            }
+        }
+
+        // --- CSS System Colors Blacklist (from XF Html.php:1309-1360) ---
+        // XenForo blocks these to prevent UI confusion/spoofing
+
+        #[test]
+        fn xf_transparent_color_blocked() {
+            let result = parse("[color=transparent]Hidden text[/color]");
+            // transparent should be rejected - renders as text
+            assert!(
+                !result.contains("color: transparent"),
+                "transparent color should be blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_activeborder() {
+            let result = parse("[color=activeborder]Text[/color]");
+            // System colors should be rejected
+            assert!(
+                !result.contains("color: activeborder"),
+                "activeborder system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_buttonface() {
+            let result = parse("[color=buttonface]Text[/color]");
+            assert!(
+                !result.contains("color: buttonface"),
+                "buttonface system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_window() {
+            let result = parse("[color=window]Text[/color]");
+            assert!(
+                !result.contains("color: window"),
+                "window system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_highlight() {
+            let result = parse("[color=highlight]Text[/color]");
+            assert!(
+                !result.contains("color: highlight"),
+                "highlight system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_menu() {
+            let result = parse("[color=menu]Text[/color]");
+            assert!(
+                !result.contains("color: menu"),
+                "menu system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_canvas() {
+            let result = parse("[color=canvas]Text[/color]");
+            // Canvas is a CSS4 system color
+            assert!(
+                !result.contains("color: canvas"),
+                "canvas system color blocked"
+            );
+        }
+
+        #[test]
+        fn xf_system_color_case_insensitive() {
+            let result = parse("[color=TRANSPARENT]Text[/color]");
+            assert!(
+                !result.to_lowercase().contains("color: transparent"),
+                "transparent blocked case-insensitively"
+            );
+        }
+
+        // --- Font Validation (from XF Html.php:1372) ---
+
+        #[test]
+        fn xf_font_inherit_blocked() {
+            // XenForo blocks "inherit" as font-family to prevent style inheritance attacks
+            let result = parse("[font=inherit]Text[/font]");
+            // Should either block entirely or not use inherit
+            if result.contains("font-family:") {
+                assert!(
+                    !result.contains("font-family: inherit")
+                        && !result.contains("font-family: 'inherit'")
+                        && !result.contains("font-family:inherit"),
+                    "inherit keyword should be blocked in font-family"
+                );
+            }
+        }
+
+        #[test]
+        fn xf_font_with_quotes_escape() {
+            // XenForo wraps font names in quotes after escaping
+            let result = parse("[font=Arial]Text[/font]");
+            if result.contains("font-family:") {
+                // Should be escaped properly, often wrapped in quotes
+                assert!(
+                    result.contains("font-family:") && !result.contains("<script"),
+                    "Font should be safely rendered"
+                );
+            }
+        }
+
+        // --- Size Validation (from XF Html.php:1392) ---
+
+        #[test]
+        fn xf_size_non_numeric_rejected() {
+            // XenForo uses intval() which returns 0 for non-numeric
+            let result = parse("[size=abc]Text[/size]");
+            // Non-numeric sizes should be rejected or rendered as text
+            // If rendered, it shouldn't be "abc"
+            assert!(
+                !result.contains("font-size: abc"),
+                "Non-numeric size rejected"
+            );
+        }
+
+        #[test]
+        fn xf_size_negative_handled() {
+            let result = parse("[size=-5]Text[/size]");
+            // Negative sizes should be rejected or clamped
+            assert!(
+                !result.contains("font-size: -"),
+                "Negative size handled safely"
+            );
+        }
+
+        #[test]
+        fn xf_size_zero_handled() {
+            let result = parse("[size=0]Text[/size]");
+            // Zero size should be rejected (would make text invisible)
+            assert!(
+                !result.contains("font-size: 0px") && !result.contains("font-size: 0;"),
+                "Zero size should not render invisible text"
+            );
+        }
+
+        #[test]
+        fn xf_size_extremely_large() {
+            let result = parse("[size=9999]Text[/size]");
+            // Very large sizes should be clamped or rejected
+            if result.contains("font-size:") {
+                // If it renders, check the size is reasonable
+                assert!(
+                    !result.contains("font-size: 9999"),
+                    "Extremely large size should be clamped"
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // SECTION 18: PHPBB/S9E-SPECIFIC SECURITY PATTERNS
+    // Based on s9e\TextFormatter repository.xml and phpBB validations.
+    // ========================================================================
+
+    mod phpbb_security_patterns {
+        use super::*;
+
+        // --- RANGE Validation (s9e repository.xml SIZE tag) ---
+        // phpBB uses RANGE=8,36 for font sizes
+
+        #[test]
+        fn phpbb_size_below_minimum() {
+            let result = parse("[size=1]Tiny[/size]");
+            // Size 1 in phpBB scale should still work, but very small
+            // Main check: doesn't cause issues
+            assert!(result.contains("Tiny"), "Content preserved");
+        }
+
+        #[test]
+        fn phpbb_size_percentage_style() {
+            // phpBB uses percentage-based sizing (50-200%)
+            let result = parse("[size=150]Large[/size]");
+            // Should either render as percentage or convert appropriately
+            if result.contains("font-size:") {
+                assert!(
+                    !result.contains("<script>"),
+                    "No script injection via size"
+                );
+            }
+        }
+
+        // --- CHOICE Validation (s9e ALIGN tag) ---
+
+        #[test]
+        fn phpbb_align_invalid_choice() {
+            // Only left, right, center, justify should be valid
+            // Invalid values should be rejected
+            let result = parse("[align=diagonal]Text[/align]");
+            // [align] is not a supported tag in our lib, should render as text
+            assert!(
+                result.contains("[align=diagonal]") || !result.contains("text-align: diagonal"),
+                "Invalid align choice rejected"
+            );
+        }
+
+        // --- HASHMAP Validation (s9e LIST tag) ---
+
+        #[test]
+        fn phpbb_list_type_validation() {
+            // Valid types: 1, a, A, i, I (mapped to decimal, lower-alpha, etc.)
+            let result = parse("[list=1][*]Item[/list]");
+            assert!(result.contains("<ol"), "Decimal list works");
+        }
+
+        #[test]
+        fn phpbb_list_invalid_type() {
+            let result = parse("[list=invalid][*]Item[/list]");
+            // Invalid list type should fallback to default or be rejected
+            // Should not cause errors
+            assert!(result.contains("Item"), "Content preserved with invalid list type");
+        }
+
+        // --- URL Validation (s9e URL tag) ---
+
+        #[test]
+        fn phpbb_url_scheme_whitelist() {
+            // phpBB only allows configured schemes
+            let result = parse("[url=gopher://old.server.com]Old Link[/url]");
+            // Gopher protocol should be blocked (not in whitelist)
+            assert!(
+                !result.contains("href=\"gopher:"),
+                "Gopher protocol blocked"
+            );
+        }
+
+        // --- IMG Validation ---
+
+        #[test]
+        fn phpbb_img_with_dimensions_xss() {
+            // Testing dimension parameters for XSS
+            let result = parse("[img=100x100\" onerror=\"alert(1)]https://example.com/img.png[/img]");
+            assert!(
+                !result.contains(" onerror="),
+                "XSS via img dimensions blocked"
+            );
+        }
+
+        // --- Quote Attribute Injection ---
+
+        #[test]
+        fn phpbb_quote_attribute_injection() {
+            // Testing s9e quote tag attribute injection
+            let result = parse(r#"[quote author="test" onclick="alert(1)"]Text[/quote]"#);
+            // The onclick should not become an HTML attribute
+            assert!(
+                !result.contains(" onclick=\"alert"),
+                "Quote attribute injection blocked"
+            );
+        }
+
+        // --- Noparse/Plain Tag Security ---
+
+        #[test]
+        fn phpbb_noparse_preserves_dangerous_text() {
+            // Noparse should preserve but escape dangerous content
+            let result = parse("[noparse]<script>alert(1)</script>[/noparse]");
+            assert!(
+                !result.contains("<script>alert"),
+                "Script in noparse escaped"
+            );
+            // Content should be escaped
+            assert!(
+                result.contains("&lt;script&gt;") || result.contains("[noparse]"),
+                "Noparse content properly handled"
+            );
+        }
+
+        // --- Table Attribute Injection ---
+
+        #[test]
+        fn phpbb_td_colspan_xss() {
+            // Testing colspan parameter for XSS (s9e allows UINT for colspan)
+            let result = parse(r#"[table][tr][td colspan="1" onclick="alert(1)"]Cell[/td][/tr][/table]"#);
+            assert!(
+                !result.contains(" onclick="),
+                "TD colspan XSS blocked"
+            );
+        }
+
+        #[test]
+        fn phpbb_td_align_injection() {
+            // s9e CHOICE filter for align should prevent injection
+            let result = parse(r#"[table][tr][td align="left; onclick: alert(1)"]Cell[/td][/tr][/table]"#);
+            // The malicious align value should be rejected or sanitized
+            assert!(
+                !result.contains("onclick:"),
+                "TD align injection blocked"
+            );
+        }
+
+        // --- EMAIL Tag Injection ---
+
+        #[test]
+        fn phpbb_email_javascript_injection() {
+            let result = parse("[email]javascript:alert(1)[/email]");
+            assert!(
+                !result.contains("href=\"javascript:"),
+                "JavaScript in email blocked"
+            );
+        }
+
+        #[test]
+        fn phpbb_email_attribute_injection() {
+            let result = parse(r#"[email=test@example.com" onclick="alert(1)]Contact[/email]"#);
+            // The email validation should fail due to the quote, rendering as text
+            // Check that onclick doesn't appear as an actual HTML attribute
+            assert!(
+                !has_dangerous_event_handler(&result, "onclick"),
+                "Email attribute injection blocked. Output: {}",
+                result
+            );
+        }
+    }
+
+    // ========================================================================
+    // SECTION 19: COMBINED PLATFORM SECURITY TESTS
+    // Tests that verify security across both XenForo and phpBB patterns.
+    // ========================================================================
+
+    mod combined_platform_security {
+        use super::*;
+
+        #[test]
+        fn both_platforms_block_javascript_urls() {
+            let variants = vec![
+                "javascript:alert(1)",
+                "JAVASCRIPT:alert(1)",
+                "JaVaScRiPt:alert(1)",
+                " javascript:alert(1)",
+                "\tjavascript:alert(1)",
+                "\njavascript:alert(1)",
+            ];
+            for variant in variants {
+                let result = parse(&format!("[url={}]Click[/url]", variant));
+                assert!(
+                    !result.to_lowercase().contains("href=\"javascript:"),
+                    "JavaScript URL variant blocked: {}",
+                    variant
+                );
+            }
+        }
+
+        #[test]
+        fn both_platforms_block_data_urls() {
+            let variants = vec![
+                "data:text/html,<script>alert(1)</script>",
+                "DATA:text/html,<script>alert(1)</script>",
+                "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+            ];
+            for variant in variants {
+                let result = parse(&format!("[img]{}[/img]", variant));
+                assert!(
+                    !result.contains("<img") || !result.to_lowercase().contains("src=\"data:"),
+                    "Data URL variant blocked in img: {}",
+                    variant
+                );
+            }
+        }
+
+        #[test]
+        fn both_platforms_escape_html_in_content() {
+            let dangerous_content = "<script>alert('xss')</script>";
+            let result = parse(&format!("[b]{}[/b]", dangerous_content));
+            assert!(
+                !result.contains("<script>"),
+                "Script tag escaped in content"
+            );
+            assert!(
+                result.contains("&lt;script&gt;"),
+                "Script tag HTML-escaped"
+            );
+        }
+
+        #[test]
+        fn both_platforms_handle_nested_attack() {
+            // Combining multiple attack vectors
+            let input = r#"[quote="<script>"][url=javascript:alert(1)][img]data:text/html,<script>[/img][/url][/quote]"#;
+            let result = parse(input);
+            assert!(!result.contains("<script>"), "No script tags");
+            assert!(
+                !result.contains("href=\"javascript:"),
+                "No javascript URLs"
+            );
+            assert!(
+                !result.contains("src=\"data:") || !result.contains("<img"),
+                "No data URLs in img"
+            );
+        }
+
+        #[test]
+        fn both_platforms_handle_encoding_attacks() {
+            // HTML entity encoded javascript
+            let result = parse("[url=&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;alert(1)]Click[/url]");
+            // Should not decode and execute
+            assert!(
+                !result.to_lowercase().contains("href=\"javascript:"),
+                "HTML entity encoded javascript blocked"
+            );
+        }
+
+        #[test]
+        fn valid_content_still_works() {
+            // Ensure security doesn't break legitimate content
+            let input = r#"[b]Hello[/b] [i]World[/i]
+[url=https://example.com]Link[/url]
+[img]https://example.com/image.png[/img]
+[quote="User"]Some quote[/quote]
+[code]console.log("test");[/code]
+[color=red]Red text[/color]
+[size=4]Sized text[/size]"#;
+            let result = parse(input);
+
+            assert!(result.contains("<strong>Hello</strong>"), "Bold works");
+            assert!(result.contains("<em>World</em>"), "Italic works");
+            assert!(result.contains("href=\"https://example.com\""), "URL works");
+            assert!(result.contains("src=\"https://example.com/image.png\""), "Img works");
+            assert!(result.contains("<blockquote"), "Quote works");
+            assert!(result.contains("<code>"), "Code works");
+            assert!(result.contains("color:"), "Color works");
+            assert!(result.contains("font-size:"), "Size works");
+        }
+    }
 }
 
 // ============================================================================

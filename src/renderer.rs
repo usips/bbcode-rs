@@ -932,6 +932,58 @@ pub fn escape_html(input: &str) -> Cow<'_, str> {
 
 /// Validates a color value.
 fn is_valid_color(color: &str) -> bool {
+    let lower = color.to_ascii_lowercase();
+
+    // Block "transparent" - can be used to hide text (XenForo pattern)
+    if lower == "transparent" {
+        return false;
+    }
+
+    // Block CSS system colors (XenForo pattern) - can cause UI confusion/spoofing
+    const SYSTEM_COLORS: &[&str] = &[
+        "activeborder",
+        "activecaption",
+        "activetext",
+        "appworkspace",
+        "background",
+        "buttonface",
+        "buttonhighlight",
+        "buttonshadow",
+        "buttontext",
+        "canvas",
+        "canvastext",
+        "captiontext",
+        "field",
+        "fieldtext",
+        "graytext",
+        "highlight",
+        "highlighttext",
+        "inactiveborder",
+        "inactivecaption",
+        "inactivecaptiontext",
+        "infobackground",
+        "infotext",
+        "linktext",
+        "mark",
+        "marktext",
+        "menu",
+        "menutext",
+        "scrollbar",
+        "threeddarkshadow",
+        "threedface",
+        "threedhighlight",
+        "threedlightshadow",
+        "threedshadow",
+        "window",
+        "windowframe",
+        "windowtext",
+        "visitedtext",
+    ];
+
+    if SYSTEM_COLORS.contains(&lower.as_str()) {
+        return false;
+    }
+
     // Hex color
     if color.starts_with('#') {
         let hex = &color[1..];
@@ -946,11 +998,16 @@ fn is_valid_color(color: &str) -> bool {
     }
 
     // Named color (simplified validation)
-    VALID_COLORS.contains(&color.to_ascii_lowercase().as_str())
+    VALID_COLORS.contains(&lower.as_str())
 }
 
 /// Validates a font family name.
 fn is_valid_font(font: &str) -> bool {
+    // Block "inherit" keyword (XenForo pattern) - can be used for style inheritance attacks
+    if font.trim().eq_ignore_ascii_case("inherit") {
+        return false;
+    }
+
     // Only allow alphanumeric, spaces, and hyphens
     font.chars()
         .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_')
@@ -1011,6 +1068,12 @@ fn parse_size(size: &str) -> Option<String> {
 fn is_valid_url(url: &str, allowed_schemes: &[String]) -> bool {
     // Must not be empty
     if url.is_empty() {
+        return false;
+    }
+
+    // Block URLs containing newlines (XenForo pattern)
+    // Newlines can be used to break out of attributes or inject headers
+    if url.contains('\n') || url.contains('\r') {
         return false;
     }
 
