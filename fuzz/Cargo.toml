@@ -1,0 +1,49 @@
+[package]
+name = "bbcode-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.bbcode]
+path = ".."
+
+[[bin]]
+name = "fuzz_parse"
+path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_url"
+path = "fuzz_targets/fuzz_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_img"
+path = "fuzz_targets/fuzz_img.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_style"
+path = "fuzz_targets/fuzz_style.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_html_escape"
+path = "fuzz_targets/fuzz_html_escape.rs"
+test = false
+doc = false
+bench = false

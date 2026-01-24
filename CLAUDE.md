@@ -20,6 +20,9 @@ cargo test --release
 # Run a single test
 cargo test test_name
 
+# Run property-based tests (41 tests with thousands of random inputs)
+cargo test --test proptest
+
 # Run benchmarks
 cargo bench
 
@@ -30,6 +33,14 @@ cargo run --example xss_check
 
 # Enable plugins feature (linkme-based distributed registration)
 cargo build --features plugins
+
+# Fuzzing (requires nightly Rust)
+cargo +nightly fuzz list                    # List fuzz targets
+cargo +nightly fuzz run fuzz_parse          # Fuzz main parser
+cargo +nightly fuzz run fuzz_url            # Fuzz URL handling (XSS focus)
+cargo +nightly fuzz run fuzz_img            # Fuzz image tags
+cargo +nightly fuzz run fuzz_style          # Fuzz color/font/size (CSS injection)
+cargo +nightly fuzz run fuzz_html_escape    # Fuzz HTML escaping
 ```
 
 ## Architecture
