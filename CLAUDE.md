@@ -62,6 +62,41 @@ Custom tags are added in two places:
 
 See `examples/attach.rs` for a complete custom tag implementation with batch data fetching.
 
+#### Tag Aliases
+
+Tags support aliases via the `aliases` field. For example, `[attachment]` is an alias for `[attach]`:
+
+```rust
+CustomTagDef {
+    name: "attach".into(),
+    aliases: vec!["attachment".into()],
+    // ...
+}
+```
+
+Both `[attach]123[/attach]` and `[attachment]123[/attachment]` will be handled identically.
+
+#### Overriding Built-in Tags
+
+Custom handlers are checked **before** built-in rendering. To override a built-in tag like `[url]`:
+
+```rust
+struct CustomUrlHandler;
+
+impl CustomTagHandler for CustomUrlHandler {
+    fn tag_name(&self) -> &str { "url" }
+
+    fn render(&self, tag: &TagNode, ctx: &RenderContext, output: &mut String) -> bool {
+        // Custom rendering logic here
+        // Return true to indicate the tag was handled
+        // Return false to fall through to built-in rendering
+        true
+    }
+}
+
+renderer.register_handler(Arc::new(CustomUrlHandler));
+```
+
 ### Key Design Decisions
 
 - **Zero-copy parsing**: Tokens and AST nodes use `&str` or `Cow<str>` referencing original input
@@ -100,8 +135,13 @@ Primary goal: XenForo compatibility. Secondary: phpBB compatibility.
 
 | Tag | Type | Notes |
 |-----|------|-------|
-| `[flash]` | Simple | Deprecated, low priority |
-| `[attachment]` | Complex | Same as XenForo `[attach]` |
+| `[attachment]` | Complex | Alias for `[attach]` - implement via custom handler |
+
+### Explicitly Unsupported Tags
+
+| Tag | Reason |
+|-----|--------|
+| `[flash]` | Deprecated technology, security risk, not supported by modern browsers |
 
 ### Prefetch Pattern for Complex Tags
 
