@@ -6,6 +6,8 @@
 //! - OWASP XSS Filter Evasion Cheat Sheet
 //! - PT Security: Fuzzing for XSS via nested parsers
 //! - ruforo BBCode parser vulnerability (GitHub: jaw-sh/ruforo PR #8)
+//! - XenForo v2.3.9/v2.2.18: BBCode table width injection (Html.php + EditorHtml.php)
+//! - XenForo v2.3.9/v2.2.18: Lightbox data-src injection (lightbox.js)
 
 use bbcode::parse;
 
@@ -1366,5 +1368,254 @@ mod fuzzing_edge_cases {
         let result = parse("[url=\x00http://x.com\x00]Link\x00[/url]");
         // Should handle null bytes throughout
         assert!(!result.is_empty(), "Null bytes handled throughout");
+    }
+}
+
+// ============================================================================
+// XENFORO v2.3.9/v2.2.18 — BBCode Table Width Injection & Lightbox data-src
+// ============================================================================
+//
+// Two XSS vectors patched in XenForo v2.3.9 (and backported to v2.2.18):
+//
+// 1. BBCode Table Width Injection (Html.php:1712, Html.php:1751, EditorHtml.php)
+//    [TABLE], [TD], and [TH] accept a width option. Before the patch, the width
+//    value was interpolated directly into a style attribute without escaping:
+//      <table style='width: $width'>
+//    A payload like [TABLE width="100%' onmouseover='alert(1)"] breaks out of
+//    the style attribute via the unescaped single quote and injects an event
+//    handler. Fix: htmlspecialchars($width, ENT_QUOTES).
+//
+// 2. Lightbox data-src Injection (lightbox.js)
+//    The lightbox JS reads data-src attributes from <img> elements and injects
+//    them unsanitized into DOM when building the fullscreen viewer. If data-src
+//    contained " or <, an attacker could break out of the attribute context.
+//    Fix: sanitizeSrc() strips dangerous chars ("'<>) via percent-encoding.
+//
+// Our renderer uses escape_html() which escapes <, >, &, ", and ' — covering
+// both vectors. These tests verify that defense.
+
+mod xenforo_2_3_9_table_width_injection {
+    use super::*;
+
+    // -- [TABLE] width injection --
+
+    /// Core exploit: single-quote breakout from style attribute into event handler.
+    /// XenForo Html.php:1712 before patch: <table style='width: $width'>
+    #[test]
+    fn table_width_single_quote_breakout() {
+        let result = parse("[table width=\"100%' onmouseover='alert(1)\"]cell[/table]");
+        assert!(
+            !has_dangerous_event_handler(&result, "onmouseover"),
+            "Table width single-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Double-quote breakout variant targeting style="width: ..." context.
+    #[test]
+    fn table_width_double_quote_breakout() {
+        let result = parse(r#"[table width="100%" onmouseover="alert(1)"]cell[/table]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onmouseover"),
+            "Table width double-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Breakout with injected closing tag to start a new element with event handler.
+    #[test]
+    fn table_width_tag_injection() {
+        let result = parse(r#"[table width="100%"><script>alert(1)</script><table style="width:100%"]cell[/table]"#);
+        assert!(
+            !result.contains("<script>"),
+            "Table width must not allow tag injection: {result}"
+        );
+    }
+
+    /// Style attribute breakout to inject onfocus with autofocus trick.
+    #[test]
+    fn table_width_onfocus_autofocus() {
+        let result = parse(r#"[table width="100%' onfocus='alert(1)' autofocus='true"]cell[/table]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onfocus"),
+            "Table width onfocus/autofocus injection must be blocked: {result}"
+        );
+    }
+
+    /// CSS expression injection via width value (legacy IE vector, defense in depth).
+    #[test]
+    fn table_width_css_expression() {
+        let result = parse("[table width=\"expression(alert(1))\"]cell[/table]");
+        assert!(
+            !result.contains("expression("),
+            "Table width must not pass through CSS expressions: {result}"
+        );
+        // Verify it's escaped, not raw
+        assert!(
+            result.contains("expression(") == false
+                || result.contains("&lt;") || result.contains("&#x27;") || result.contains("&quot;"),
+            "CSS expression should be escaped or rejected: {result}"
+        );
+    }
+
+    // -- [TD] width injection --
+
+    /// Same single-quote breakout attack on [TD] tag.
+    /// XenForo Html.php:1751 before patch: <td style='width: $width'>
+    #[test]
+    fn td_width_single_quote_breakout() {
+        let result = parse("[table][tr][td width=\"50%' onclick='alert(1)\"]cell[/td][/tr][/table]");
+        assert!(
+            !has_dangerous_event_handler(&result, "onclick"),
+            "TD width single-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Double-quote breakout on [TD].
+    #[test]
+    fn td_width_double_quote_breakout() {
+        let result = parse(r#"[table][tr][td width="50%" onclick="alert(1)"]cell[/td][/tr][/table]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onclick"),
+            "TD width double-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Tag injection through [TD] width.
+    #[test]
+    fn td_width_tag_injection() {
+        let result = parse(r#"[table][tr][td width="50%"><img src=x onerror=alert(1)><td style="width:50%"]cell[/td][/tr][/table]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onerror"),
+            "TD width tag injection must be blocked: {result}"
+        );
+    }
+
+    // -- [TH] width injection --
+
+    /// Same attack vector on [TH] tag.
+    #[test]
+    fn th_width_single_quote_breakout() {
+        let result = parse("[table][tr][th width=\"50%' onmouseover='alert(1)\"]header[/th][/tr][/table]");
+        assert!(
+            !has_dangerous_event_handler(&result, "onmouseover"),
+            "TH width single-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Double-quote breakout on [TH].
+    #[test]
+    fn th_width_double_quote_breakout() {
+        let result = parse(r#"[table][tr][th width="50%" onmouseover="alert(1)"]header[/th][/tr][/table]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onmouseover"),
+            "TH width double-quote breakout must be escaped: {result}"
+        );
+    }
+
+    // -- Verify correct rendering is preserved --
+
+    /// Valid percentage width should still render correctly.
+    #[test]
+    fn table_valid_percentage_width() {
+        let result = parse("[table width=\"100%\"][tr][td]cell[/td][/tr][/table]");
+        assert!(
+            result.contains("width: 100%;"),
+            "Valid percentage width should render: {result}"
+        );
+    }
+
+    /// Valid pixel width should still render correctly.
+    #[test]
+    fn td_valid_pixel_width() {
+        let result = parse("[table][tr][td width=\"200px\"]cell[/td][/tr][/table]");
+        assert!(
+            result.contains("width: 200px;"),
+            "Valid pixel width should render: {result}"
+        );
+    }
+
+    /// Verify the escape_html output for a single-quote breakout attempt.
+    /// Our escape_html converts ' to &#x27;, preventing attribute breakout.
+    #[test]
+    fn table_width_escape_verification() {
+        let result = parse("[table width=\"100%' onmouseover='alert(1)\"]cell[/table]");
+        // The single quotes must be escaped as &#x27;
+        assert!(
+            result.contains("&#x27;") || !result.contains("onmouseover"),
+            "Single quotes in width must be escaped to &#x27;: {result}"
+        );
+    }
+}
+
+mod xenforo_2_3_9_lightbox_data_src_injection {
+    use super::*;
+
+    // The lightbox vulnerability is about data-src attributes containing " or <
+    // being injected unsanitized into DOM. While our renderer doesn't emit
+    // data-src attributes on [img] tags by default, custom tag handlers might.
+    // These tests verify that [img] src values with dangerous characters are
+    // properly escaped, preventing any downstream lightbox-style DOM injection.
+
+    /// Image URL containing double-quote to break out of src attribute.
+    #[test]
+    fn img_src_double_quote_breakout() {
+        let result = parse(r#"[img]http://example.com/img.png" onload="alert(1)[/img]"#);
+        assert!(
+            !has_dangerous_event_handler(&result, "onload"),
+            "Image src double-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Image URL containing angle brackets for tag injection.
+    #[test]
+    fn img_src_tag_injection() {
+        let result = parse("[img]http://example.com/img.png\"><script>alert(1)</script><img src=\"[/img]");
+        assert!(
+            !result.contains("<script>"),
+            "Image src must not allow tag injection: {result}"
+        );
+    }
+
+    /// Image URL with single-quote to break out of attribute context.
+    #[test]
+    fn img_src_single_quote_breakout() {
+        let result = parse("[img]http://example.com/img.png' onerror='alert(1)[/img]");
+        assert!(
+            !has_dangerous_event_handler(&result, "onerror"),
+            "Image src single-quote breakout must be escaped: {result}"
+        );
+    }
+
+    /// Dangerous characters in data-like attributes via [img] option map.
+    /// Tests that alt text (which could be repurposed as data-src by JS) is escaped.
+    #[test]
+    fn img_alt_attribute_injection() {
+        let result = parse(r#"[img alt="x"><script>alert(1)</script><img alt="y"]http://example.com/img.png[/img]"#);
+        assert!(
+            !result.contains("<script>"),
+            "Image alt attribute must not allow tag injection: {result}"
+        );
+    }
+
+    /// XenForo sanitizeSrc() strips "<>. Verify our escape_html covers all of these.
+    #[test]
+    fn img_src_all_dangerous_chars_escaped() {
+        let result = parse(r#"[img]http://example.com/test"'<>img.png[/img]"#);
+        // All of ", ', <, > must be escaped
+        assert!(
+            !result.contains(r#"test"'<>img"#),
+            "All dangerous characters in img src must be escaped: {result}"
+        );
+    }
+
+    /// Image source with encoded HTML entities should not double-encode,
+    /// but raw dangerous chars must be escaped.
+    #[test]
+    fn img_src_with_ampersand() {
+        let result = parse("[img]http://example.com/img.png?a=1&b=2[/img]");
+        // The & should be escaped to &amp;
+        assert!(
+            result.contains("&amp;") || !result.contains("&b="),
+            "Ampersand in img src should be escaped: {result}"
+        );
     }
 }

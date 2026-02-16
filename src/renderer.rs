@@ -838,7 +838,9 @@ impl Renderer {
 
         if let Some(map) = tag.option.as_map() {
             if let Some(width) = map.get("width") {
-                write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                if is_valid_css_width(width) {
+                    write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                }
             }
         }
 
@@ -858,7 +860,9 @@ impl Renderer {
 
         if let Some(map) = tag.option.as_map() {
             if let Some(width) = map.get("width") {
-                write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                if is_valid_css_width(width) {
+                    write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                }
             }
         }
 
@@ -872,7 +876,9 @@ impl Renderer {
 
         if let Some(map) = tag.option.as_map() {
             if let Some(width) = map.get("width") {
-                write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                if is_valid_css_width(width) {
+                    write!(output, " style=\"width: {};\"", escape_html(width)).unwrap();
+                }
             }
         }
 
@@ -1061,6 +1067,36 @@ fn parse_size(size: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Validates a CSS width value for safe rendering in style attributes.
+/// Accepts numeric values with px/% units. Rejects CSS expressions and other injection vectors.
+fn is_valid_css_width(width: &str) -> bool {
+    let trimmed = width.trim();
+
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Block CSS expressions (legacy IE) and function calls
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("expression") || lower.contains("url(") || lower.contains("calc(")
+        || lower.contains("var(") || lower.contains("env(")
+    {
+        return false;
+    }
+
+    // Allow: digits optionally followed by px, %, em, rem, or bare number
+    // Examples: "100%", "200px", "50", "10em", "2rem"
+    let trimmed_bytes = trimmed.as_bytes();
+    let digit_end = trimmed_bytes.iter().position(|&b| !b.is_ascii_digit() && b != b'.').unwrap_or(trimmed_bytes.len());
+
+    if digit_end == 0 {
+        return false;
+    }
+
+    let unit = &trimmed[digit_end..];
+    matches!(unit, "" | "%" | "px" | "em" | "rem")
 }
 
 /// Validates a URL for safe rendering.
