@@ -27,6 +27,7 @@
 //! ```
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -35,7 +36,6 @@ use crate::ast::{Document, Node, TagNode};
 use crate::tags::TagRegistry;
 
 /// Context provided to custom tag handlers for rendering.
-#[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
     /// The CSS class prefix.
     pub class_prefix: &'a str,
@@ -47,6 +47,18 @@ pub struct RenderContext<'a> {
     pub sanitize: bool,
     /// Allowed URL schemes.
     pub allowed_schemes: &'a [String],
+    /// Reference to the renderer for child rendering.
+    renderer: Option<&'a Renderer>,
+}
+
+impl<'a> RenderContext<'a> {
+    /// Render the children of a tag node to HTML.
+    /// Use this in custom tag handlers to render nested BBCode content.
+    pub fn render_children(&self, tag: &TagNode, output: &mut String) {
+        if let Some(renderer) = self.renderer {
+            renderer.render_children(tag, output);
+        }
+    }
 }
 
 /// Trait for custom tag handlers that extend the renderer.
@@ -159,6 +171,7 @@ pub struct Renderer {
     config: RenderConfig,
     registry: TagRegistry,
     custom_handlers: HashMap<String, Arc<dyn CustomTagHandler>>,
+    smilies_disabled: Cell<bool>,
 }
 
 impl Renderer {
@@ -168,6 +181,7 @@ impl Renderer {
             config: RenderConfig::default(),
             registry: TagRegistry::new(),
             custom_handlers: HashMap::new(),
+            smilies_disabled: Cell::new(false),
         }
     }
 
@@ -177,6 +191,7 @@ impl Renderer {
             config,
             registry: TagRegistry::new(),
             custom_handlers: HashMap::new(),
+            smilies_disabled: Cell::new(false),
         }
     }
 
@@ -232,6 +247,7 @@ impl Renderer {
             open_links_in_new_tab: self.config.open_links_in_new_tab,
             sanitize: self.config.sanitize,
             allowed_schemes: &self.config.allowed_schemes,
+            renderer: Some(self),
         }
     }
 
@@ -268,10 +284,16 @@ impl Renderer {
 
     /// Renders text content with HTML escaping.
     fn render_text(&self, text: &str, output: &mut String) {
-        if self.config.sanitize {
-            output.push_str(&escape_html(text));
+        let escaped = if self.config.sanitize {
+            escape_html(text)
         } else {
-            output.push_str(text);
+            Cow::Borrowed(text)
+        };
+
+        if !self.smilies_disabled.get() && !self.config.smilies.is_empty() {
+            output.push_str(&self.apply_smilies(&escaped));
+        } else {
+            output.push_str(&escaped);
         }
     }
 
@@ -321,8 +343,14 @@ impl Renderer {
             }
         }
 
-        // Look up tag definition
-        let _tag_def = self.registry.get(&tag.name);
+        // Check if this tag stops smilies
+        let tag_def = self.registry.resolve(&tag.name);
+        let prev_smilies_disabled = self.smilies_disabled.get();
+        if let Some(ref def) = tag_def {
+            if def.stop_smilies() {
+                self.smilies_disabled.set(true);
+            }
+        }
 
         match &*tag.name {
             // Basic formatting
@@ -391,6 +419,9 @@ impl Renderer {
                 }
             }
         }
+
+        // Restore smilies state
+        self.smilies_disabled.set(prev_smilies_disabled);
     }
 
     /// Renders a simple tag like <strong>, <em>, etc.
@@ -401,7 +432,7 @@ impl Renderer {
     }
 
     /// Renders all children of a tag.
-    fn render_children(&self, tag: &TagNode, output: &mut String) {
+    pub(crate) fn render_children(&self, tag: &TagNode, output: &mut String) {
         for child in &tag.children {
             self.render_node(child, output);
         }
@@ -896,6 +927,33 @@ impl Renderer {
         if !tag.raw_close.is_empty() {
             self.render_text(&tag.raw_close, output);
         }
+    }
+
+    /// Applies smilie replacement to text, avoiding double-replacement.
+    fn apply_smilies(&self, input: &str) -> String {
+        // Sort smilies by key length descending (longest match first)
+        let mut smilies: Vec<(&str, &str)> = self.config.smilies
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        smilies.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        let mut result = input.to_string();
+        let mut markers: Vec<(u8, &str)> = Vec::new();
+
+        for (code, replacement) in &smilies {
+            if result.contains(*code) {
+                let idx = markers.len() as u8;
+                markers.push((idx, replacement));
+                result = result.replace(*code, &format!("\x01{}", idx));
+            }
+        }
+
+        for (idx, replacement) in &markers {
+            result = result.replace(&format!("\x01{}", idx), replacement);
+        }
+
+        result
     }
 }
 

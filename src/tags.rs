@@ -308,6 +308,14 @@ impl ResolvedTag {
         }
     }
 
+    /// Returns true if smilies should be stopped.
+    pub fn stop_smilies(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.stop_smilies,
+            ResolvedTag::Custom(t) => t.stop_smilies,
+        }
+    }
+
     /// Returns true if an option is required.
     pub fn option_required(&self) -> bool {
         match self {
