@@ -263,8 +263,9 @@ impl Parser {
                                 let (content, close_tag, _rest) =
                                     tokenize_until_close(remaining, &tag_name_for_close);
 
+                                tag_node.children.push(Node::Text(Cow::Borrowed(content)));
+
                                 if !close_tag.is_empty() {
-                                    tag_node.children.push(Node::Text(Cow::Borrowed(content)));
                                     tag_node.raw_close = Cow::Borrowed(close_tag);
                                     tag_node.mark_closed();
 
@@ -276,14 +277,17 @@ impl Parser {
                                         original_input,
                                         close_end,
                                     );
-
-                                    let node = Node::Tag(tag_node);
-                                    self.push_to_stack_or_doc(&mut stack, &mut doc, node);
-                                    continue;
+                                } else {
+                                    // No close tag — consume all remaining input as verbatim
+                                    i = tokens.len();
                                 }
+
+                                let node = Node::Tag(tag_node);
+                                self.push_to_stack_or_doc(&mut stack, &mut doc, node);
+                                continue;
                             }
 
-                            // No close tag found, push to stack like normal
+                            // Couldn't determine position, push to stack like normal
                             stack.push(tag_node);
                         }
                         // Regular tag with content
@@ -736,6 +740,22 @@ mod tests {
         // Content should be literal text, not parsed
         let content = code.inner_text();
         assert_eq!(&*content, "[b]Not bold[/b]");
+    }
+
+    #[test]
+    fn parse_code_verbatim_unclosed() {
+        let parser = Parser::new();
+
+        // [code] without closing tag — all remaining content is verbatim
+        let doc = parser.parse("[code][b]message");
+        let code = doc.nodes[0].as_tag().unwrap();
+        assert_eq!(&*code.name, "code");
+        assert_eq!(&*code.inner_text(), "[b]message");
+
+        // [code] with inner closed tag but no [/code]
+        let doc2 = parser.parse("[code][b]message[/b]");
+        let code2 = doc2.nodes[0].as_tag().unwrap();
+        assert_eq!(&*code2.inner_text(), "[b]message[/b]");
     }
 
     #[test]
