@@ -139,6 +139,42 @@ pub fn parse_with_config(
     renderer.render(&doc)
 }
 
+/// Check if rendered HTML contains meaningful visible content.
+///
+/// Returns `false` for output produced by empty formatting tags like `[b][/b]`
+/// or `[i]  [/i]` that render to HTML with no visible text.
+///
+/// Returns `true` if there is any non-whitespace text outside HTML tags, or
+/// if the output contains content-producing elements like `<img>`.
+///
+/// # Example
+///
+/// ```rust
+/// use bbcode::{parse, has_visible_content};
+///
+/// assert!(!has_visible_content(&parse("[b][/b]")));
+/// assert!(has_visible_content(&parse("[b]hello[/b]")));
+/// assert!(has_visible_content(&parse("[img]https://example.com/img.png[/img]")));
+/// ```
+pub fn has_visible_content(html: &str) -> bool {
+    // Content-producing elements that are meaningful without text
+    if html.contains("<img ") {
+        return true;
+    }
+
+    // Strip HTML tags and check for non-whitespace text
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag && !ch.is_whitespace() => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,5 +704,34 @@ fn main() {
         let result = renderer.render(&doc);
 
         assert!(!result.contains("rel=\"nofollow\""));
+    }
+
+    // ============================================================================
+    // Visible Content Tests
+    // ============================================================================
+
+    #[test]
+    fn test_has_visible_content_empty_tags() {
+        assert!(!has_visible_content(&parse("[b][/b]")));
+        assert!(!has_visible_content(&parse("[i][/i]")));
+        assert!(!has_visible_content(&parse("[u][/u]")));
+        assert!(!has_visible_content(&parse("[s][/s]")));
+        assert!(!has_visible_content(&parse("[b][i][/i][/b]")));
+        assert!(!has_visible_content(&parse("[b]   [/b]")));
+        assert!(!has_visible_content(""));
+    }
+
+    #[test]
+    fn test_has_visible_content_with_text() {
+        assert!(has_visible_content("hello"));
+        assert!(has_visible_content(&parse("[b]hello[/b]")));
+        assert!(has_visible_content(&parse("[i]x[/i]")));
+        assert!(has_visible_content(&parse("just text")));
+    }
+
+    #[test]
+    fn test_has_visible_content_with_img() {
+        assert!(has_visible_content(&parse("[img]https://example.com/img.png[/img]")));
+        assert!(has_visible_content("<img class=\"bb-img\" src=\"https://example.com/image.png\">"));
     }
 }
