@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::ast::{Document, Node, TagNode, TagOption};
+use crate::ast::{Document, Node, TagNode, TagOption, TagType};
 use crate::tags::{CustomTagDef, ResolvedTag, TagRegistry};
 use crate::tokenizer::{tokenize, tokenize_until_close, Token};
 
@@ -197,6 +197,20 @@ impl Parser {
                             raw_close: Cow::Borrowed(""),
                             broken: false,
                         };
+
+                        // Auto-close inline ancestors if this tag breaks inline context
+                        if resolved.closes_inlines() {
+                            while let Some(top) = stack.last() {
+                                let is_inline = self.registry.resolve(&top.name)
+                                    .map(|r| r.tag_type() == TagType::Inline)
+                                    .unwrap_or(false);
+                                if !is_inline { break; }
+                                let mut closed = stack.pop().unwrap();
+                                closed.mark_closed();
+                                let node = Node::Tag(closed);
+                                self.push_to_stack_or_doc(&mut stack, &mut doc, node);
+                            }
+                        }
 
                         // Handle self-closing tags
                         if resolved.is_self_closing() {

@@ -734,4 +734,75 @@ fn main() {
         assert!(has_visible_content(&parse("[img]https://example.com/img.png[/img]")));
         assert!(has_visible_content("<img class=\"bb-img\" src=\"https://example.com/image.png\">"));
     }
+
+    // ============================================================================
+    // closes_inlines Tests
+    // ============================================================================
+
+    /// Helper: parse with a custom tag that has closes_inlines: true + Verbatim
+    fn parse_with_block_tag(input: &str) -> String {
+        let mut parser = Parser::new();
+        parser.register_custom_tag(CustomTagDef {
+            name: "block".into(),
+            tag_type: TagType::Verbatim,
+            has_content: true,
+            closes_inlines: true,
+            ..Default::default()
+        });
+        let doc = parser.parse(input);
+        let renderer = Renderer::new();
+        renderer.render(&doc)
+    }
+
+    #[test]
+    fn test_closes_inlines_breaks_url() {
+        let result = parse_with_block_tag("[url=https://example.com]text [block]click[/block][/url]");
+        // [url] should close with just "text " as content before [block] opens
+        assert!(result.contains("text </a>"), "URL should close before block. Got: {}", result);
+        // The block content should not be inside an <a> tag
+        assert!(!result.contains(">click</a>"), "Block content must not be inside <a>. Got: {}", result);
+    }
+
+    #[test]
+    fn test_closes_inlines_breaks_bold() {
+        let result = parse_with_block_tag("[b]before [block]inside[/block] after[/b]");
+        // [b] should close before [block]
+        assert!(result.contains("<strong>before </strong>"));
+        // "inside" should not be inside <strong>
+        assert!(!result.contains("<strong>before inside"));
+    }
+
+    #[test]
+    fn test_closes_inlines_standalone() {
+        // No inline ancestors — should work normally
+        let result = parse_with_block_tag("[block]test[/block]");
+        assert!(result.contains("[block]test[/block]"));
+    }
+
+    #[test]
+    fn test_closes_inlines_stops_at_block() {
+        let result = parse_with_block_tag("[quote][url=https://example.com]text [block]click[/block][/url][/quote]");
+        // Should stop at [quote] (block tag) and not close it
+        assert!(result.contains("<blockquote"));
+        // [url] should still be auto-closed before [block]
+        assert!(result.contains("text </a>"));
+    }
+
+    #[test]
+    fn test_closes_inlines_nested_inlines() {
+        let result = parse_with_block_tag("[url=https://example.com][b]bold [block]click[/block][/b][/url]");
+        // Both [b] and [url] should close before [block]
+        assert!(result.contains("bold </strong></a>"));
+    }
+
+    #[test]
+    fn test_closes_inlines_prevents_trap_link() {
+        let result = parse_with_block_tag("[url=https://evil.com][block]click me[/block][/url]");
+        // The block content must NOT be inside an <a> tag
+        let block_pos = result.find("[block]").or(result.find("click me"));
+        let a_close_pos = result.find("</a>");
+        if let (Some(bp), Some(ap)) = (block_pos, a_close_pos) {
+            assert!(ap < bp, "Block content should come after </a>, got: {}", result);
+        }
+    }
 }

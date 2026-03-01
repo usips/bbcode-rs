@@ -69,6 +69,10 @@ pub struct TagDef {
 
     /// Whether content should be trimmed.
     pub trim_content: bool,
+
+    /// Whether this tag auto-closes open inline ancestor tags when it opens,
+    /// like how HTML block elements break inline elements.
+    pub closes_inlines: bool,
 }
 
 impl Default for TagDef {
@@ -87,6 +91,7 @@ impl Default for TagDef {
             stop_auto_link: false,
             convert_newlines: true,
             trim_content: false,
+            closes_inlines: false,
         }
     }
 }
@@ -178,6 +183,10 @@ pub struct CustomTagDef {
 
     /// Whether content should be trimmed.
     pub trim_content: bool,
+
+    /// Whether this tag auto-closes open inline ancestor tags when it opens,
+    /// like how HTML block elements break inline elements.
+    pub closes_inlines: bool,
 }
 
 impl Default for CustomTagDef {
@@ -196,6 +205,7 @@ impl Default for CustomTagDef {
             stop_auto_link: false,
             convert_newlines: true,
             trim_content: false,
+            closes_inlines: false,
         }
     }
 }
@@ -329,6 +339,14 @@ impl ResolvedTag {
         match self {
             ResolvedTag::Static(t) => t.option_allowed,
             ResolvedTag::Custom(t) => t.option_allowed,
+        }
+    }
+
+    /// Returns true if this tag auto-closes open inline ancestors.
+    pub fn closes_inlines(&self) -> bool {
+        match self {
+            ResolvedTag::Static(t) => t.closes_inlines,
+            ResolvedTag::Custom(t) => t.closes_inlines,
         }
     }
 
@@ -513,6 +531,7 @@ pub static TAG_BOLD: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Italic text: [i]...[/i]
@@ -530,6 +549,7 @@ pub static TAG_ITALIC: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Underline text: [u]...[/u]
@@ -547,6 +567,7 @@ pub static TAG_UNDERLINE: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Strikethrough text: [s]...[/s]
@@ -564,6 +585,7 @@ pub static TAG_STRIKETHROUGH: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Color text: [color=red]...[/color]
@@ -581,6 +603,7 @@ pub static TAG_COLOR: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Font: [font=Arial]...[/font]
@@ -598,6 +621,7 @@ pub static TAG_FONT: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Size: [size=150]...[/size] or [size=12px]...[/size]
@@ -615,6 +639,7 @@ pub static TAG_SIZE: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// URL/Link: [url]...[/url] or [url=http://...]...[/url]
@@ -632,6 +657,7 @@ pub static TAG_URL: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Email: [email]...[/email] or [email=addr]...[/email]
@@ -649,6 +675,7 @@ pub static TAG_EMAIL: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Image: [img]url[/img] or [img=widthxheight]url[/img]
@@ -666,6 +693,7 @@ pub static TAG_IMG: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// Quote: [quote]...[/quote] or [quote="author"]...[/quote]
@@ -683,6 +711,7 @@ pub static TAG_QUOTE: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// Code block: [code]...[/code] or [code=lang]...[/code]
@@ -700,6 +729,7 @@ pub static TAG_CODE: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Inline code: [icode]...[/icode]
@@ -717,6 +747,7 @@ pub static TAG_ICODE: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// PHP code: [php]...[/php]
@@ -734,6 +765,7 @@ pub static TAG_PHP: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// HTML code: [html]...[/html]
@@ -751,6 +783,7 @@ pub static TAG_HTML: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Plain text (no parsing): [plain]...[/plain]
@@ -768,6 +801,7 @@ pub static TAG_PLAIN: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// List: [list]...[/list] or [list=1]...[/list]
@@ -785,6 +819,7 @@ pub static TAG_LIST: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: false,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// List item: [*]
@@ -802,6 +837,7 @@ pub static TAG_LIST_ITEM: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Horizontal rule: [hr]
@@ -819,6 +855,7 @@ pub static TAG_HR: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Line break: [br]
@@ -836,6 +873,7 @@ pub static TAG_BR: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Left align: [left]...[/left]
@@ -853,6 +891,7 @@ pub static TAG_LEFT: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Center align: [center]...[/center]
@@ -870,6 +909,7 @@ pub static TAG_CENTER: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Right align: [right]...[/right]
@@ -887,6 +927,7 @@ pub static TAG_RIGHT: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Justify align: [justify]...[/justify]
@@ -904,6 +945,7 @@ pub static TAG_JUSTIFY: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Indent: [indent]...[/indent] or [indent=2]...[/indent]
@@ -921,6 +963,7 @@ pub static TAG_INDENT: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Heading: [heading=1]...[/heading]
@@ -938,6 +981,7 @@ pub static TAG_HEADING: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: false,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// Spoiler (block): [spoiler]...[/spoiler] or [spoiler=title]...[/spoiler]
@@ -955,6 +999,7 @@ pub static TAG_SPOILER: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Inline spoiler: [ispoiler]...[/ispoiler]
@@ -972,6 +1017,7 @@ pub static TAG_ISPOILER: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// User mention: [user=123]username[/user]
@@ -989,6 +1035,7 @@ pub static TAG_USER: TagDef = TagDef {
     stop_auto_link: true,
     convert_newlines: false,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Subscript: [sub]...[/sub]
@@ -1006,6 +1053,7 @@ pub static TAG_SUB: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Superscript: [sup]...[/sup]
@@ -1023,6 +1071,7 @@ pub static TAG_SUP: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 // ============================================================================
@@ -1044,6 +1093,7 @@ pub static TAG_TABLE: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: false,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// Table row: [tr]...[/tr]
@@ -1061,6 +1111,7 @@ pub static TAG_TR: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: false,
     trim_content: true,
+    closes_inlines: false,
 };
 
 /// Table header cell: [th]...[/th]
@@ -1078,6 +1129,7 @@ pub static TAG_TH: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 /// Table data cell: [td]...[/td]
@@ -1095,6 +1147,7 @@ pub static TAG_TD: TagDef = TagDef {
     stop_auto_link: false,
     convert_newlines: true,
     trim_content: false,
+    closes_inlines: false,
 };
 
 // ============================================================================
